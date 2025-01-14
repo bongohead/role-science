@@ -76,8 +76,11 @@
 			{{- "\n<tool_response>\n" -}}
 			{{- m.content -}}
 			{{- "\n</tool_response>" -}}
+			{{- "\n" -}}
 		{%- else -%}
-			{{- "<|observation|>" -}}
+			{%- if loop.first or messages[loop.index0 - 1].role != "tool" -%}
+				{{- "<|observation|>" -}}
+			{%- endif -%}
 			{%- for tr in m.content -%}
 				{{- "\n<tool_response>\n" -}}
 				{{- tr.output if tr.output is defined else tr -}}
