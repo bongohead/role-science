@@ -1,2 +1,12 @@
 # Secrets
 .env
+
+# Python
+.venv
+*.pyc
+.pycache
+
+# Data
+*.csv
+*.pt
+*.pkl
