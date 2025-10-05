@@ -67,6 +67,48 @@ def convert_outputs_to_df(input_ids: torch.Tensor, attention_mask: torch.Tensor,
     return df
 
 @torch.no_grad()
+def convert_outputs_to_df_fast(input_ids: torch.Tensor, attention_mask: torch.Tensor, output_logits: torch.Tensor) -> pd.DataFrame:
+    """
+    Equivalent but faster than convert_outputs_to_df: compute on GPU, avoid full softmax, avoid big arange expansions, and only move masked 1D results to CPU once.
+    """
+    logits = output_logits.to(torch.float32)
+    B, N, V = logits.shape
+
+    # Mask indices (boolean) and their coordinates
+    attn = (attention_mask != 0)
+    seq_ix, tok_ix = attn.nonzero(as_tuple = True)
+
+    # Top-1 id and logit at each [B, N]
+    top_logit, top_id = logits.max(dim = -1)
+
+    # Compute top-1 probability without building full softmax; p_max = exp(max_logit - logsumexp(logits))
+    lse = torch.logsumexp(logits, dim = -1)
+    top_prob = (top_logit - lse).exp()
+
+    # Slice only valid positions
+    token_id = input_ids[attn]
+    output_id = top_id[attn]
+    output_prob = top_prob[attn]
+
+    # Move small, final arrays to CPU once
+    seq_ix = seq_ix.cpu().numpy()
+    tok_ix = tok_ix.cpu().numpy()
+    token_id = token_id.cpu().numpy()
+    output_id = output_id.cpu().numpy()
+    output_prob = output_prob.cpu().numpy().round(2)
+
+    # Build DataFrame
+    df = pd.DataFrame({
+        "sequence_ix": seq_ix,
+        "token_ix": tok_ix,
+        "token_id": token_id,
+        "output_id": output_id,
+        "output_prob": output_prob,
+    })
+    return df
+
+
+@torch.no_grad()
 def convert_hidden_states_to_df(input_ids: torch.Tensor, attention_mask: torch.Tensor, all_hidden_states: list[torch.Tensor]) -> pd.DataFrame:
     """
     Create a sample (token) level dataframe with column for embeddings. Skips positions where attention_mask == 0 (i.e., padding).
