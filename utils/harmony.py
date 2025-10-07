@@ -38,9 +38,11 @@ def render_prompt(messages: list[tuple[str, str, str | None]], *, open_for_compl
     parts = [harmony_message(r, c, channel = ch) for (r, c, ch) in messages]
     return "".join(parts) + ("<|start|>assistant" if open_for_completion else "")
 
-def normalize_generated_assistant(reply: str) -> str:
+def normalize_harmony(reply: str) -> str:
     """
     After generation, replace trailing <|return|> with <|end|> before storing in history (as per Harmony guidance) for multiturn.
     """
     reply = reply.rstrip()
     return reply[:-10] + "<|end|>" if reply.endswith("<|return|>") else reply
+
+
