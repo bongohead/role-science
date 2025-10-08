@@ -64,6 +64,10 @@ uv pip install --python "$VENV_DIR/bin/python" \
   plotly pandas kaleido python-dotenv pyyaml tqdm termcolor \
   datasets
 
+# Below needed for plotly exports
+uv run --python "$VENV_DIR/bin/python" plotly_get_chrome -y
+apt update && apt-get install libnss3 libatk-bridge2.0-0 libcups2 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libxkbcommon0 libpango-1.0-0 libcairo2 -y
+
 # Flash-Attention (separate so we can set build flags independently if needed)
 # uv pip install --python "$VENV_DIR/bin/python" --only-binary=:all: flash-attn==2.8.3 # Only use prebuilt wheels
 # uv pip install --python "$VENV_DIR/bin/python" flash-attn==2.8.3 --no-build-isolation # Allow build
