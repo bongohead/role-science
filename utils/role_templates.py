@@ -101,3 +101,24 @@ def render_single_message(model_architecture, role, content, tool_name = None) -
         raise ValueError("Invalid model!")
 
     return res
+
+def load_chat_template(parent_dir, model_architecture) -> str:
+    """
+    Load a J2 chat template file for use in apply_chat_template; these are slightly modified versions of the real chat template. 
+     No other changes are made other than those listed below.
+
+    Description:
+        These are created by taking the default tokenizer.chat_template and applying minimal model-specific changes listed below.
+    
+    Notes:
+        - For Qwen3MoE, this:
+            (1) prevents old <think></think> tags from being stripped.
+        - For GPT-OSS, this:
+            (1) removes the default system prompt;
+            (2) has {"role": "system", "content", "..."} propagate to the system prompt instead of the developer prompt;
+            (3) supports passing <think> directly (instead of a separate thinking key as in https://huggingface.co/spaces/huggingfacejs/chat-template-playground?modelId=openai%2Fgpt-oss-20b&example=hello-world).
+    """
+    with open(f'{parent_dir}/{model_architecture}.j2', 'r') as f:
+        chat_template_str = f.read()
+
+    return chat_template_str
