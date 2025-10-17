@@ -173,29 +173,3 @@ async def get_openrouter_responses(prompts: list[list], params: dict, batch_size
         max_retries = max_retries,
         verbose = verbose,
     )
-
-
-def validate_and_extract_response(llm_response, key = 'content'):
-    """
-    Extract content/reasoning from response
-    
-    Params:
-        @llm_response: The LLM response object
-        @key: The key to extract, either 'content' or 'reasoning'
-    """
-    if 'choices' not in llm_response:
-        print(llm_response)
-        return {'reasoning': None, 'output': None}
-
-    choice = llm_response['choices'][0]
-    if choice['finish_reason'] == 'length':
-        print(f"Warning - early stop: {choice['finish_reason']}")
-        print(f"  CONTENT: {choice['message']['content']}")
-        print(f"  REASONING: {choice['message']['reasoning']}")
-        return {'reasoning': None, 'output': None}
-
-    return {
-        'reasoning': choice['message']['reasoning'],
-        'output': choice['message']['content'],
-    }
-
