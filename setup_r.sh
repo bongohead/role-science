@@ -32,7 +32,7 @@ R -e "install.packages('reticulate', Ncpus = 8);"
 R -e "install.packages('highcharter', Ncpus = 8);"
 
 # Fonts for plotting
-apt install fonts-texgyre
+apt install -y fonts-texgyre
 R -e "install.packages('showtext', Ncpus = 8);"
 R -e "install.packages('svglite', Ncpus = 8);"
 R -e "install.packages('ggtext', Ncpus = 8);"
