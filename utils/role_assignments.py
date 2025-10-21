@@ -14,7 +14,7 @@ def label_gptoss_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         - Tool-calls (assistant → functions) and tool outputs (functions.* → assistant) are supported.
 
     Params: 
-        @sample_df: A dataframe with the following columns: prompt_ix, token_ix, token (and optionally batch_ix, sequence_ix for sample_ix).
+        @sample_df: A dataframe with the following columns: prompt_ix, token_ix, token.
          Prompt_ix represents a global index of the sequence, equivalent to an index on (batch_ix, sequence_ix).
 
     Returns:
@@ -22,7 +22,7 @@ def label_gptoss_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         - seg_id: segment id within prompt
         - in_content_span: bool
         - role: str in {system, user, developer, assistant-cot, assistant-final, assistant-commentary, tool} or NaN
-        - token_in_seq_ix, token_in_role_ix, sample_ix
+        - token_in_seq_ix, token_in_role_ix
     """
     res = (\
         sample_df
