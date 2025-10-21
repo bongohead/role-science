@@ -38,8 +38,12 @@ The below notebooks are responsible for (1) training the role probes, then (2) t
 2. Run `experiments/da-role-analysis/export-jailbreak-activations.ipynb`:
     - Takes the CoT Forgery results (both prompts and generations) from the prior section (those generated in `export-jailbreak-generations.ipynb`) in the correct instruct format, then runs forward passes, and exporst layer-by-layer activations for either of the `gpt-oss-*` models.
     - Depends on: `export-jailbreak-generations.ipynb`.
-3. Run `experiments/da-role-analysis/analysis-role-confusion.ipynb`:
-    - This runs the actual role analysis confusion analysis, using the probes from (1) to project the activations from (2) into role space.
+3. Run `experiments/da-role-analysis/create-role-probes.ipynb`:
+    - Trains model-specific role probes using data from (1), then tests them qualitatively on a few basic example conversations.
+    - Depends on `experiments/da-role-analysis/export-c4-activations.ipynb`.
+4. Run `experiments/da-role-analysis/analyze-jailbreak-roles.ipynb`:
+    - Uses the role probes trained in (3) to project (2) into role space.
+    - Depends on: `experiments/da-role-analysis/create-role-probes.ipynb`, `experiments/da-role-analysis/export-jailbreak-activations.ipynb`
 
 ### Run CoT Forgery on agents
 The below notebooks run an agentic prompt injection jailbreak using a simple ReAct loop. 

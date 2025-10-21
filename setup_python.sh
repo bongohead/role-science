@@ -64,6 +64,9 @@ uv pip install --python "$VENV_DIR/bin/python" \
   plotly pandas kaleido python-dotenv pyyaml tqdm termcolor \
   datasets
 
+# Optional, needed for ReAct loop agent testing
+uv pip install --python $VENV_DIR/bin/python openai
+
 # Below needed for plotly exports
 uv run --python "$VENV_DIR/bin/python" plotly_get_chrome -y
 apt update && apt-get install libnss3 libatk-bridge2.0-0 libcups2 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libxkbcommon0 libpango-1.0-0 libcairo2 -y
