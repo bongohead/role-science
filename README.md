@@ -1,7 +1,7 @@
 
 <h2 align="center">Policy over Values: Hacking LLM Thoughts via CoT Forgery</h2>
 <div align="center" style="line-height: 1;">
-    <a href="https://arxiv.org/abs/2505.09388">📑 ArXiv</a>
+    <a href="">📑 ArXiv</a>
 </div>
 
 
@@ -14,7 +14,7 @@
 5. [Run CoT Forgery to hijack agents](#5-run-cot-forgery-to-hijack-agents)
 
 ## 1. Introduction
-This repo contains code for <a href="https://arxiv.org/abs/2505.09388">📑 Policy over Values: Hacking LLM Thoughts via CoT Forgery</a>. 
+This repo contains code for <a href="">📑 Policy over Values: Hacking LLM Thoughts via CoT Forgery</a>. 
 
 *CoT Forgery* is a zero-shot black-box jailbreak that **exposes a learned behavioral flaw in reasoning-based safety**. Against **Deliberative Alignment (DA)**—responsible for state-of-the-art safety in OpenAI’s o-series and gpt-oss models—our attack achieves a near-total safety bypass, elevating harmful response rates on StrongREJECT from **0%** to **89%** (gpt-oss-20b), **95%** (gpt-oss-120b), and **79%** (o4-mini).
 
@@ -30,7 +30,9 @@ This repo contains code for replicating the evaluations and the mechanistic role
 
 ## 3. Evaluate CoT Forgery attacks
 This runs and evaluates the CoT Forgery prompts on a variety of local and closed-weight models.
-
+<p align="center">
+  <img src="docs/user-eval-result.png">
+</p>
 Run the notebooks in this section to: (1) generate the actual CoT Forgery jailbreak prompts; (2) run the attacks on locally-loaded `gpt-oss-*` model; (3) run the attacks on closed-weight models; and (4) create visualizations of the results. 
 
 1. **Generate CoT Forgery jailbreak prompts**:
@@ -80,7 +82,9 @@ Run the notebooks in this section to: (1) create role probe training data; (2) g
 
 ## 5. Run CoT Forgery to hijack agents
 The below notebooks run an agentic prompt injection jailbreak using an ReAct tool use loop.
-
+<p align="center">
+  <img src="docs/agent-eval-result.png">
+</p>
 Run the notebooks in this section to: (1) run CoT Forgery prompt injection on local models; (2) run CoT Forgery prompt injection on closed weight models; (3) visualize results.
 
 1. **Run CoT Forgery attacks on local agents**
