@@ -22,7 +22,6 @@ def label_gptoss_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         - seg_id: segment id within prompt
         - in_content_span: bool
         - role: str in {system, user, developer, assistant-cot, assistant-final, assistant-commentary, tool} or NaN
-        - token_in_seq_ix, token_in_role_ix
     """
     res = (\
         sample_df
@@ -106,7 +105,6 @@ def label_qwen3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         - seg_id: segment id within prompt
         - in_content_span: bool
         - role: str in {system, user, developer, assistant-cot, assistant-final, assistant-commentary, tool} or NaN
-        - token_in_seq_ix, token_in_role_ix, sample_ix
     """
     IM_START, IM_END = '<|im_start|>', '<|im_end|>'
     OPEN_THINK, CLOSE_THINK = '<think>', '</think>'
@@ -257,17 +255,6 @@ def label_qwen3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
             )
         )
 
-        # Indices (all chaining; no .loc)
-        .assign(
-            token_in_seq_ix  = lambda d: d.groupby('prompt_ix').cumcount(),
-            token_in_role_ix = lambda d: d.groupby(['prompt_ix','role']).cumcount(),
-            sample_ix        = lambda d: (
-                d.groupby(['batch_ix','sequence_ix','token_ix']).ngroup()
-                if {'batch_ix','sequence_ix','token_ix'}.issubset(d.columns)
-                else np.arange(len(d))
-            )
-        )
-
         # Cleanup helpers
         .drop(
             columns = [
@@ -283,6 +270,19 @@ def label_qwen3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     )    
 
 def label_content_roles(model_architecture, sample_df):
+    """
+    Takes a token-level df, labels each token with its role only within the content span. Makes no assumption about the number of messages in the sequence.
+    
+    Params: 
+        @sample_df: A dataframe with the following columns: prompt_ix, token_ix, token.
+         Prompt_ix represents a global index of the sequence, equivalent to an index on (batch_ix, sequence_ix).
+
+    Returns:
+        The original df with new columns:
+        - seg_id: segment id within prompt
+        - in_content_span: bool
+        - role: str in {system, user, developer, assistant-cot, assistant-final, assistant-commentary, tool} or NaN
+    """
     if model_architecture == 'gptoss':
         return label_gptoss_content_roles(sample_df)
     elif model_architecture == 'qwen3moe':

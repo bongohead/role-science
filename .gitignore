@@ -13,3 +13,7 @@
 *.png
 *.html
 *.pdf
+
+# Retain everything in docs
+!docs/
+!docs/**
