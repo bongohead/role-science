@@ -58,26 +58,31 @@ Run the notebooks in this section to: (1) generate the actual CoT Forgery jailbr
 ## 4. Run role-space analysis
 This performs as the causal mechanistic analysis to let us understand what the model "thinks" the correct role assigned to each token is.
 
-Run the notebooks in this section to: (1) create role probe training data; (2) generate activations from the CoT Forgery prompts + generations in the previous section; (3) train role probes project the CoT Forgery prompts into role space; (4) visualize results.
+Run the notebooks in this section to: (1) create role probe training data; (2) generate activations from the CoT Forgery prompts + generations in the previous section; (3) train role probes; (4) use them to project the CoT Forgery prompts into role space; (4) visualize results.
 
 1. **Generate role probe training data**:
-    - **🚀Run**: `da-role-analysis/export-c4-activations.ipynb`
+    - **🚀Run**: `da-role-analysis/01-export-c4-activations.ipynb`
     - **📚Description**: Takes a variety of SFT-style text from the C4 and HPLT datasets, then places them within role tags, runs forward passes, and exports layer-by-layer activations for either of the `gpt-oss-*` models. 
     - **↗️Output**: Activations and related token-mapping metadata stored in `activations/{model_name}`.
 2. **Generate activations from Cot Forgery attacks**:
-    - **🚀Run**: `da-role-analysis/export-jailbreak-activations.ipynb`
+    - **🚀Run**: `da-role-analysis/02-export-jailbreak-activations.ipynb`
     - **📚Description**: Takes the CoT Forgery results (both prompts and generations) from the prior section (those generated in `export-jailbreak-generations.ipynb`) in the correct instruct format, then runs forward passes, and exporst layer-by-layer activations for either of the `gpt-oss-*` models.
     - **📥Input**: outputs from `da-jailbreaks/export-jailbreak-generations.ipynb`.
     - **↗️Output**: Activations and related token-mapping metadata stored in `activations-redteam/{model_name}`.
-3. **Train probes and analyze results**:
-    - **🚀Run**: `da-role-analysis/project-role-probes.ipynb`
-    - **📚Description**: Trains the probes, then uses them to conduct causal mech interp analysis on the CoT Forgery activations.
-    - **📥Input**: outputs from `export-c4-activations.ipynb` and `export-jailbreak-activations.ipynb`.
-    - **↗️Output**: `da-role-analysis/probes/*` containing dumped analysis results.
-4. **(Optional) Visualize results**:
-    - **🚀Run**: `da-role-analysis/plot-probe-results.ipynb`
+3. **Train role-space probes**:
+    - **🚀Run**: `da-role-analysis/03-train-role-probes.ipynb`
+    - **📚Description**: Trains the role-space probes.
+    - **📥Input**: outputs from `01-export-c4-activations.ipynb`.
+    - **↗️Output**: `da-role-analysis/probes/*` containing the trained probes.
+4. **Project CoT Forgery attacks into role space**:
+    - **🚀Run**: `da-role-analysis/04-project-role-probes.ipynb`
+    - **📚Description**: Uses the probes to conduct causal mech interp analysis on the CoT Forgery activations.
+    - **📥Input**: outputs from `03-train-role-probes.ipynb` and `02-export-jailbreak-activations.ipynb`.
+    - **↗️Output**: `da-role-analysis/exports/*` containing dumped results.
+5. **(Optional) Visualize results**:
+    - **🚀Run**: `da-role-analysis/05-plot-probe-results.ipynb`
     - **📚Description**: Plots results.
-    - **📥Input**: outputs from `project-role-probes.ipynb`.
+    - **📥Input**: outputs from `04-project-role-probes.ipynb`.
     - **↗️Output**: `da-role-analysis/plots/*` containing visualizations.
 
 ## 5. Run CoT Forgery to hijack agents

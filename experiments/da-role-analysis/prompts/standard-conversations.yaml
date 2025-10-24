@@ -25,7 +25,7 @@ gptoss20:
       The user asks: grow them inside or outdoors. We need to respond. They want a concise answer. We should mention that outdoors is generally easier because tomatoes need full sun, warmth, and space. Indoor can be done with grow lights, but requires more effort. Provide pros and cons. Also mention that if you have a sunny window or greenhouse, indoor can work. Provide recommendation.
   - role: assistant-final
     content: |-
-      **Outdoors is usually the easiest option.**  
+      Outdoors is usually the easiest option.  
       - **Sun & heat:** Tomatoes thrive on 6–8 hours of direct sun and daytime temps of 70–80 °F (21–27 °C). A sunny garden spot or balcony gives that naturally.  
       - **Space & airflow:** Outdoor beds or raised beds allow you to plant multiple plants, stake or cage them, and keep air moving—reducing disease.  
 
