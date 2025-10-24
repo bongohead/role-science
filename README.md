@@ -36,23 +36,23 @@ This runs and evaluates the CoT Forgery prompts on a variety of local and closed
 Run the notebooks in this section to: (1) generate the actual CoT Forgery jailbreak prompts; (2) run the attacks on locally-loaded `gpt-oss-*` model; (3) run the attacks on closed-weight models; and (4) create visualizations of the results. 
 
 1. **Generate CoT Forgery jailbreak prompts**:
-    - **🚀Run**: `da-jailbreaks/generate-policies.ipynb`
+    - **🚀Run**: `da-jailbreaks/01-generate-policies.ipynb`
     - **📚Description**: Calls an LLM via Openrouter to generate the CoT forgery prompts (as well as comparison baseline prompts) for each harmful question in StrongREJECT. Note that this does not yet run forward passes or generations.
     - **↗️Output**: `base-harmful-policies.csv` containing forged CoTs.
 2. **Run CoT Forgery attacks on local models**:
-    - **🚀Run**: `da-jailbreaks/export-jailbreak-generations.ipynb`
+    - **🚀Run**: `da-jailbreaks/02-export-jailbreak-generations.ipynb`
     - **📚Description**: Runs CoT forgery plus baseline prompts on local models. Uses `gpt-oss-20b` / `gpt-oss-120b` locally with the model loaded at recommended settings (FA3 + MXFP4 experts). After generation, calls an an LLM classifier via Openrouter to classify jailbreak success.
-    - **📥Input**: outputs from `da-jailbreaks/generate-policies.ipynb`.
+    - **📥Input**: outputs from `01-generate-policies.ipynb`.
     - **↗️Output**: `base-harmful-responses-classified.csv` containing generated text and attack success classifications.
 3. **Run CoT Forgery attacks on closed models**:
-    - **🚀Run**: `da-jailbreaks/run-openrouter-generations.ipynb`:
+    - **🚀Run**: `da-jailbreaks/03-run-openrouter-generations.ipynb`:
     - **📚Description**: Runs CoT forgery plus baseline prompts on non-local models via Openrouter. After generation, calls an LLM classifier via Openrouter to classify attack success.
-    - **📥Input**: outputs from `da-jailbreaks/generate-policies.ipynb`.
+    - **📥Input**: outputs from `01-generate-policies.ipynb`.
     - **↗️Output**: `openrouter-generations/harmful-responses-classified.csv` containing generated text and jailbreak success classifications.
 4. **(Optional) Visualize results**:
     - **🚀Run**: `da-jailbreaks/plot-jailbreak-stats.ipynb`:
     - **📚Description**: Plots results.
-    - **📥Input**: outputs from `da-jailbreaks/generate-policies.ipynb` and `da-jailbreaks/run-openrouter-generations.ipynb`.
+    - **📥Input**: outputs from `02-export-jailbreak-generations.ipynb` and `03-run-openrouter-generations.ipynb`.
     - **↗️Output**: `da-jailbreaks/plots/*` containing visualizations.
 
 ## 4. Run role-space analysis
@@ -67,7 +67,7 @@ Run the notebooks in this section to: (1) create role probe training data; (2) g
 2. **Generate activations from Cot Forgery attacks**:
     - **🚀Run**: `da-role-analysis/02-export-jailbreak-activations.ipynb`
     - **📚Description**: Takes the CoT Forgery results (both prompts and generations) from the prior section (those generated in `export-jailbreak-generations.ipynb`) in the correct instruct format, then runs forward passes, and exporst layer-by-layer activations for either of the `gpt-oss-*` models.
-    - **📥Input**: outputs from `da-jailbreaks/export-jailbreak-generations.ipynb`.
+    - **📥Input**: outputs from `da-jailbreaks/02-export-jailbreak-generations.ipynb`.
     - **↗️Output**: Activations and related token-mapping metadata stored in `activations-redteam/{model_name}`.
 3. **Train role-space probes**:
     - **🚀Run**: `da-role-analysis/03-train-role-probes.ipynb`
@@ -93,15 +93,15 @@ The below notebooks run an agentic prompt injection jailbreak using an ReAct too
 Run the notebooks in this section to: (1) run CoT Forgery prompt injection on local models; (2) run CoT Forgery prompt injection on closed weight models; (3) visualize results.
 
 1. **Run CoT Forgery attacks on local agents**
-    - **🚀Run**: `da-agent-loop/run-injections-gpt-oss.ipynb`
+    - **🚀Run**: `da-agent-loop/01-run-injections-gpt-oss.ipynb`
     - **📚Description**: Sets up and runs prompt injection exfiltration attacks with locally loaded `gpt-oss-*` models, then classifies whether the exfiltration worked successfully.
     - **↗️Output**: `local-agent-outputs-{model_name}-classified.csv` containing full ReAct loop outputs in every turn, plus final attack success classifications.
 2. **Run CoT Forgery attacks on closed-weight agents**
-    - **🚀Run**: `da-agent-loop/run-injections-openai.ipynb`
+    - **🚀Run**: `da-agent-loop/02-run-injections-openai.ipynb`
     - **📚Description**: Sets up and runs prompt injection exfiltration attacks with OpenAI-hosted models, then classifies whether the exfiltration worked successfully.
     - **↗️Output**: `api-agents-output-classified.csv` containing full ReAct loop outputs in every turn, plus final attack success classifications.
 4. **(Optional) Visualize results**:
     - **🚀Run**: `da-agent-loop/plot-agent-results.ipynb`
     - **📚Description**: Plots results.
-    - **📥Input**: outputs from `run-injections-gpt-oss.ipynb` and `run-injections-openai.ipynb`.
+    - **📥Input**: outputs from `01-run-injections-gpt-oss.ipynb` and `02-run-injections-openai.ipynb`.
     - **↗️Output**: `da-agent-loop/plots/*` containing visualizations.
