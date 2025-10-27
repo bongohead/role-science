@@ -13,6 +13,8 @@
 *.png
 *.html
 *.pdf
+*.arrow
+*.feather
 
 # Retain everything in docs
 !docs/
