@@ -25,11 +25,12 @@ apt-get install -y libxml2-dev libfontconfig1-dev libcurl4-openssl-dev libharfbu
 R -e "install.packages('tidyverse', Ncpus = 8);"
 R -e "install.packages('slider', Ncpus = 8);"
 R -e "install.packages('zoo', Ncpus = 8);"
+R -e "install.packages('arrow', Ncpus = 8);"
 
 # Visualizations for paths
-apt get install -y pandoc
-R -e "install.packages('reticulate', Ncpus = 8);"
-R -e "install.packages('highcharter', Ncpus = 8);"
+# apt get install -y pandoc
+# R -e "install.packages('reticulate', Ncpus = 8);"
+# R -e "install.packages('highcharter', Ncpus = 8);"
 
 # Fonts for plotting
 apt install -y fonts-texgyre
