@@ -23,6 +23,7 @@ jupyter kernelspec list
 
 apt-get install -y libxml2-dev libfontconfig1-dev libcurl4-openssl-dev libharfbuzz-dev libfribidi-dev libfreetype6-dev libpng-dev libtiff5-dev libjpeg-dev libwebp-dev libssl-dev
 R -e "install.packages('tidyverse', Ncpus = 8);"
+R -e "install.packages('patchwork', Ncpus = 8);"
 R -e "install.packages('slider', Ncpus = 8);"
 R -e "install.packages('zoo', Ncpus = 8);"
 R -e "install.packages('arrow', Ncpus = 8);"
