@@ -36,7 +36,7 @@ This runs and evaluates the CoT Forgery prompts on a variety of local and closed
 Run the notebooks in this section to: (1) generate the actual CoT Forgery jailbreak prompts; (2) run the attacks on locally-loaded `gpt-oss-*` model; (3) run the attacks on closed-weight models; and (4) create visualizations of the results. 
 
 1. **Generate CoT Forgery jailbreak prompts**
-    - **🚀 Run**: `da-user-injections/01-generate-policies.ipynb`
+    - **🚀 Run**: `user-injections/01-generate-policies.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Calls an LLM via OpenRouter to generate the CoT forgery prompts (as well as comparison baseline prompts) for each harmful question in StrongREJECT. Note that this does not yet run forward passes or generations.
@@ -45,7 +45,7 @@ Run the notebooks in this section to: (1) generate the actual CoT Forgery jailbr
       </details>
 
 2. **Run CoT Forgery attacks on local models**
-    - **🚀 Run**: `da-user-injections/02-export-jailbreak-generations.ipynb`
+    - **🚀 Run**: `user-injections/02-export-jailbreak-generations.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Runs CoT forgery plus baseline prompts on local models. Uses `gpt-oss-20b` / `gpt-oss-120b` locally with the model loaded at recommended settings (FA3 + MXFP4 experts). After generation, calls an LLM classifier via OpenRouter to classify jailbreak success.
@@ -56,7 +56,7 @@ Run the notebooks in this section to: (1) generate the actual CoT Forgery jailbr
       </details>
 
 3. **Run CoT Forgery attacks on closed models**
-    - **🚀 Run**: `da-user-injections/03-run-openrouter-generations.ipynb`
+    - **🚀 Run**: `user-injections/03-run-openrouter-generations.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Runs CoT forgery plus baseline prompts on non-local models via OpenRouter. After generation, calls an LLM classifier via OpenRouter to classify attack success.
@@ -67,14 +67,14 @@ Run the notebooks in this section to: (1) generate the actual CoT Forgery jailbr
       </details>
 
 4. **(Optional) Visualize results**
-    - **🚀 Run**: `da-user-injections/04-plot-jailbreak-stats.ipynb`
+    - **🚀 Run**: `user-injections/04-plot-jailbreak-stats.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Plots results.
       
       **📥 Input**: outputs from `02-export-jailbreak-generations.ipynb` and `03-run-openrouter-generations.ipynb`.
       
-      **↗️ Output**: `da-user-injections/plots/*` containing visualizations.
+      **↗️ Output**: `user-injections/plots/*` containing visualizations.
       </details>
 
 ## 4. Run CoT Forgery attacks in agents
@@ -85,7 +85,7 @@ The below notebooks run an agentic prompt injection jailbreak using an ReAct too
 Run the notebooks in this section to: (1) run CoT Forgery prompt injection on local models; (2) run CoT Forgery prompt injection on closed weight models; (3) visualize results.
 
 1. **Run CoT Forgery attacks on local agents**
-    - **🚀 Run**: `da-agent-injections/01-run-injections-gpt-oss.ipynb`
+    - **🚀 Run**: `tool-injections/01-run-injections-gpt-oss.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Sets up and runs prompt injection exfiltration attacks with locally loaded `gpt-oss-*` models, then classifies whether the exfiltration worked successfully.
@@ -94,7 +94,7 @@ Run the notebooks in this section to: (1) run CoT Forgery prompt injection on lo
       </details>
 
 2. **Run CoT Forgery attacks on closed-weight agents**
-    - **🚀 Run**: `da-agent-injections/02-run-injections-openai.ipynb`
+    - **🚀 Run**: `tool-injections/02-run-injections-openai.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Sets up and runs prompt injection exfiltration attacks with OpenAI-hosted models, then classifies whether the exfiltration worked successfully.
@@ -103,14 +103,14 @@ Run the notebooks in this section to: (1) run CoT Forgery prompt injection on lo
       </details>
 
 3. **(Optional) Visualize results**
-    - **🚀 Run**: `da-agent-injections/03-plot-agent-results.ipynb`
+    - **🚀 Run**: `tool-injections/03-plot-agent-results.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Plots results.
       
       **📥 Input**: outputs from `01-run-injections-gpt-oss.ipynb` and `02-run-injections-openai.ipynb`.
       
-      **↗️ Output**: `da-agent-injections/plots/*` containing visualizations.
+      **↗️ Output**: `tool-injections/plots/*` containing visualizations.
       </details>
 
 
@@ -122,7 +122,7 @@ The below notebooks perform the causal mechanistic analysis to let us understand
 Run the notebooks in this section to: (1) create role probe training data; (2-3) generate activations from the CoT Forgery prompts + generations in the previous section; (4) train role probes; (5) use them to project the CoT Forgery prompts into role space; (6) visualize results.
 
 1. **Generate role probe training data**
-    - **🚀 Run**: `da-role-analysis/01-export-c4-activations.ipynb`
+    - **🚀 Run**: `role-analysis/01-export-c4-activations.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Takes a variety of SFT-style text from the C4 and HPLT datasets, then places them within role tags, runs forward passes, and exports layer-by-layer activations for either of the `gpt-oss-*` models.
@@ -131,56 +131,56 @@ Run the notebooks in this section to: (1) create role probe training data; (2-3)
       </details>
 
 2. **Generate activations from user Cot Forgery attacks**
-    - **🚀 Run**: `da-role-analysis/02-export-user-injection-activations.ipynb` 
+    - **🚀 Run**: `role-analysis/02-export-user-injection-activations.ipynb` 
     - <details><summary>Description</summary>
       
       **📚 Description**: Takes the CoT Forgery results from the prior user-injection section and runs forward passes to export layer-by-layer activations for either of the `gpt-oss-*` models.
       
-      **📥 Input**: outputs from `da-user-injections/02-export-jailbreak-generations.ipynb`.
+      **📥 Input**: outputs from `user-injections/02-export-jailbreak-generations.ipynb`.
       
       **↗️ Output**: Activations and related token-mapping metadata stored in `activations-redteam/{model_name}`.
       </details>
 
 3. **(Optional) Generate activations from agent Cot Forgery attacks**
-    - **🚀 Run**: `da-role-analysis/03-export-agent-activations.ipynb`
+    - **🚀 Run**: `role-analysis/03-export-agent-activations.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Takes the CoT Forgery results from the prior agent-injection section and runs forward passes to export layer-by-layer activations for either of the `gpt-oss-*` models. Skip this if you don't care about role space analysis of agent injections. 
       
-      **📥 Input**: outputs from `da-agent-injections/01-run-injections-gpt-oss.ipynb`.
+      **📥 Input**: outputs from `tool-injections/01-run-injections-gpt-oss.ipynb`.
       
       **↗️ Output**: Activations and related token-mapping metadata stored in `activations-agent/{model_name}`.
       </details>
 
 4. **Train role-space probes**
-    - **🚀 Run**: `da-role-analysis/04-train-role-probes.ipynb`
+    - **🚀 Run**: `role-analysis/04-train-role-probes.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Trains the role-space probes.
       
       **📥 Input**: outputs from `01-export-c4-activations.ipynb`.
       
-      **↗️ Output**: `da-role-analysis/probes/*` containing the trained probes.
+      **↗️ Output**: `role-analysis/probes/*` containing the trained probes.
       </details>
 
 5. **Project CoT Forgery attacks into role space**
-    - **🚀 Run**: `da-role-analysis/05-project-role-probes.ipynb`; skip the last section if you skipped #3 don't care about role analysis of agent injections.
+    - **🚀 Run**: `role-analysis/05-project-role-probes.ipynb`; skip the last section if you skipped #3 don't care about role analysis of agent injections.
     - <details><summary>Description</summary>
       
       **📚 Description**: Uses the probes to conduct causal mech interp analysis on the CoT Forgery activations.
       
       **📥 Input**: outputs from `04-train-role-probes.ipynb`, `02-export-user-injection-activations.ipynb`, and `03-export-agent-activations.ipynb` (optional, needed to conduct role analysis of agent injections).
       
-      **↗️ Output**: `da-role-analysis/exports/*` containing dumped results.
+      **↗️ Output**: `role-analysis/exports/*` containing dumped results.
       </details>
 
 6. **(Optional) Visualize results**
-    - **🚀 Run**: `da-role-analysis/06-plot-test-probe-results.ipynb`, `da-role-analysis/07-plot-injection-probe-results.ipynb`, `da-role-analysis/08-plot-agent-probe-results.ipynb`
+    - **🚀 Run**: `role-analysis/06-plot-test-probe-results.ipynb`, `role-analysis/07-plot-injection-probe-results.ipynb`, `role-analysis/08-plot-agent-probe-results.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Plots results.
       
       **📥 Input**: outputs from `05-project-role-probes.ipynb`
       
-      **↗️ Output**: `da-role-analysis/plots/*` containing visualizations.
+      **↗️ Output**: `role-analysis/plots/*` containing visualizations.
       </details>
