@@ -24,14 +24,21 @@ class ReconstructableTextDataset(Dataset):
                 shuffle = False,
                 collate_fn = collate_fn
             )
-        """        
+        """
+        if getattr(tokenizer, 'backend', None) == 'tokenizers': # For transfroerms v5, all tokenizer = backend supports fast toks
+            supports_offset = True
+        elif getattr(tokenizer, 'is_fast', False): # Backwards compat for transformers v4
+            supports_offset = True
+        else:
+            supports_offset = False
+
         tokenized = tokenizer(
             raw_texts,
             add_special_tokens = False,
             max_length = max_length,
             padding = 'max_length',
             truncation = True,
-            return_offsets_mapping = getattr(tokenizer, 'is_fast', False), # True for fast tokenizers
+            return_offsets_mapping = supports_offset,
             return_tensors = 'pt'
         )
 

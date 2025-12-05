@@ -99,7 +99,7 @@ def run_gptoss_return_topk(model, input_ids, attention_mask, return_hidden_state
 
         else:
             # Router logits and top-k (sorted=True)
-            router_logits = F.linear(moe_hidden_state, router.weight, router.bias) # (BN, E)
+            router_logits = torch.nn.functional.linear(moe_hidden_state, router.weight, router.bias) # (BN, E)
             top_vals, selected_experts = torch.topk(router_logits, router.top_k, dim = -1, sorted = True) # (BN, K)
             routing_weights_topk = torch.softmax(top_vals, dim = 1) # (BN, K)
             routing_scores_full = torch.zeros_like(router_logits).scatter_(1, selected_experts, routing_weights_topk)

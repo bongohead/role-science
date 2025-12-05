@@ -1,6 +1,6 @@
 """
 Reversed engineered forward pass for Qwen
-- Supports Qwen3-30B-A3B and Qwen3-235B-A22B
+- Supports all Qwen3-30B-A3B variants and Qwen3-235B-A22B
 - See https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen3_moe/modeling_qwen3_moe.py
 """
 import torch
@@ -31,7 +31,7 @@ def run_qwen3moe_return_topk(model, input_ids, attention_mask, return_hidden_sta
 
     cache_position = torch.arange(0, N, device = input_embeds.device)
     position_ids = cache_position.unsqueeze(0)
-    causal_mask = create_causal_mask(model.model.config, input_embeds, attention_mask, cache_position, None, position_ids)
+    causal_mask = create_causal_mask(model.model.config, input_embeds, attention_mask, cache_position, None, position_ids) # Assm no sliding window.
     position_embeddings = model.model.rotary_emb(input_embeds, position_ids)
 
     hidden_state = input_embeds
@@ -57,36 +57,41 @@ def run_qwen3moe_return_topk(model, input_ids, attention_mask, return_hidden_sta
 
         ####### Qwen3MoeSparseMoeBlock - below code replaces hidden_state = layer.mlp(hidden_state)
         batch_size, sequence_length, hidden_dim = hidden_state.shape
-        moe_hidden_state = hidden_state.view(-1, hidden_dim)
+        hidden_state_reshaped = hidden_state.view(-1, hidden_dim) # (BN, D)
 
-        router_logits = layer.mlp.gate(moe_hidden_state) # Size (BN, n_experts)
-        routing_weights = torch.nn.functional.softmax(router_logits, dim = 1, dtype = torch.float)
-        routing_weights, selected_experts = torch.topk(routing_weights, layer.mlp.top_k, dim = -1, sorted = True)
-        if layer.mlp.norm_topk_prob:
+        ## Qwen3MoeTopKRouter
+        router_logits = torch.nn.functional.linear(hidden_state_reshaped, layer.mlp.gate.weight) # <=> hidden_state_reshaped @ weight.T; out (BN, n_experts)
+        router_probs = torch.nn.functional.softmax(router_logits, dtype = torch.float, dim = -1) # Softmax dim = which dim "computes to sum to 1"
+        routing_weights, selected_experts = torch.topk(router_probs, layer.mlp.gate.top_k, dim = -1, sorted = True) # Both (BN, topk); weights of sel experts + sel expert ndices
+
+        if layer.mlp.gate.norm_topk_prob:
             routing_weights /= routing_weights.sum(dim = -1, keepdim = True)
-        routing_weights = routing_weights.to(moe_hidden_state.dtype)
+        routing_weights = routing_weights.to(router_probs.dtype) # Keep f32
 
-        final_hidden_states = torch.zeros((batch_size * sequence_length, hidden_dim), dtype = moe_hidden_state.dtype, device = moe_hidden_state.device)
-        
+        ## Qwen3MoeExperts
+        final_hidden_states = torch.zeros_like(hidden_state_reshaped)
         # One hot encode the selected experts to create an expert mask 
-        expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes = layer.mlp.num_experts).permute(2, 1, 0)
+        expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes = layer.mlp.experts.num_experts).permute(2, 1, 0) # (n_experts, top_k, BN)
+        expert_hits = torch.greater(expert_mask.sum(dim=(-1, -2)), 0).nonzero() # (num_hits, 1)
 
         if return_hidden_states:
-            layer_expert_outputs = torch.zeros((batch_size * sequence_length, layer.mlp.top_k, hidden_dim), dtype = moe_hidden_state.dtype, device = moe_hidden_state.device) # BN x topk x D
+            layer_expert_outputs = torch.zeros((batch_size * sequence_length, layer.mlp.gate.top_k, hidden_dim), dtype = hidden_state_reshaped.dtype, device = hidden_state_reshaped.device) # BN x topk x D
 
         # Loop over all available experts in the model and perform the computation on each expert
-        for expert_idx in range(layer.mlp.num_experts):
-            expert_layer = layer.mlp.experts[expert_idx]
-            idx, top_x = torch.where(expert_mask[expert_idx])
-            # Index the correct hidden states and compute the expert hidden state for the current expert.
-            current_state = moe_hidden_state[None, top_x].reshape(-1, hidden_dim)
-            current_expert_output = expert_layer(current_state) 
-            current_hidden_states = current_expert_output * routing_weights[top_x, idx, None]
-            # However `index_add_` only support torch tensors for indexing so we'll use the `top_x` tensor here.
-            final_hidden_states.index_add_(0, top_x, current_hidden_states.to(moe_hidden_state.dtype))
+        for expert_idx in expert_hits:
+            expert_idx = expert_idx[0]
+
+            top_k_pos, token_idx = torch.where(expert_mask[expert_idx]) # token_idx = which toks selected expert; top_k_pos = which topk slot for those toks; both (ntoks, )
+            current_state = hidden_state_reshaped[token_idx] # (ntoks, D)
+            
+            gate, up = torch.nn.functional.linear(current_state, layer.mlp.experts.gate_up_proj[expert_idx]).chunk(2, dim = -1)
+            current_expert_output = layer.mlp.experts.act_fn(gate) * up
+            current_expert_output = torch.nn.functional.linear(current_expert_output, layer.mlp.experts.down_proj[expert_idx])
+            current_hidden_states = current_expert_output * routing_weights[token_idx, top_k_pos, None]
+            final_hidden_states.index_add_(0, token_idx, current_hidden_states.to(final_hidden_states.dtype))
 
             if return_hidden_states:
-                layer_expert_outputs[top_x, idx] = current_expert_output.to(layer_expert_outputs.dtype)
+                layer_expert_outputs[token_idx, top_k_pos] = current_expert_output.to(layer_expert_outputs.dtype)
 
         final_hidden_states = (final_hidden_states).reshape(batch_size, sequence_length, hidden_dim)
         #######
