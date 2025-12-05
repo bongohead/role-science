@@ -24,7 +24,7 @@ This repo contains code for replicating the evaluations and the mechanistic role
 
 ## 2. Initial setup
 1. **Clone repo on GPU server**: For exact replication of the role probe results, a Nvidia H-class GPU is necessary in order to support using MXFP4 experts on `gpt-oss-*` models.
-2. **Set up dependencies**: Run `bash setup_python.sh` to set up the Python dependencies.
+2. **Set up dependencies**: Run `bash setup_python.sh` to set up the Python dependencies. The dependencies are frozen using latest versions of most packages as of Jan 2026; key dependencies are CUDA 12, torch 3.9, and transformers v4.57.3. Adjust this file if needed.
 3. **(Optional) Set up visualization dependencies**: Run `bash setup_r.sh` to set up R; this is optional and only utilized for graphing and visualization.
 4. **Add env variables**: Create a `.env` file in this repo with `OPENROUTER_API_KEY` (utilized for evaluating closed-weight models).
 
