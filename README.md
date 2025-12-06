@@ -12,6 +12,7 @@
 3. [Run CoT Forgery attacks in user prompts](#3-run-cot-forgery-attacks-in-user-prompts)
 4. [Run CoT Forgery attacks in agents](#4-run-cot-forgery-attacks-in-agents)
 5. [Run role-space analysis](#5-run-role-space-analysis)
+6. [Run prompt injection role analysis](#5-run-prompt-injection-role-analysis)
 
 ## 1. Introduction
 This repo contains code for <a href="">📑 Policy over Values: Hacking LLM Thoughts via CoT Forgery</a>. 
@@ -130,8 +131,48 @@ Run the notebooks in this section to: (1) create role probe training data; (2-3)
       **↗️ Output**: Activations and related token-mapping metadata stored in `activations/{model_name}`.
       </details>
 
-2. **Generate activations from user Cot Forgery attacks**
-    - **🚀 Run**: `role-analysis/02-export-user-injection-activations.ipynb` 
+2. **Train role-space probes**
+    - **🚀 Run**: `role-analysis/02-train-role-probes.ipynb`
+    - <details><summary>Description</summary>
+      
+      **📚 Description**: Trains the role-space probes.
+      
+      **📥 Input**: outputs from `01-export-c4-activations.ipynb`
+      
+      **↗️ Output**: `role-analysis/probes/*` containing the trained probes.
+      </details>
+
+3. **Project different texts attacks into role space**
+    - **🚀 Run**: `role-analysis/03-project-text-to-roles.ipynb`
+    - <details><summary>Description</summary>
+      
+      **📚 Description**: Uses the probes to analyze how different text is projected into role space.
+      
+      **📥 Input**: outputs from `02-train-role-probes.ipynb`.
+      
+      **↗️ Output**: `role-analysis/exports/*` containing dumped results.
+      </details>
+
+4. **(Optional) Visualize results**
+    - **🚀 Run**: `role-analysis/04-plot-text-projections.ipynb`
+    - <details><summary>Description</summary>
+      
+      **📚 Description**: Plots results.
+      
+      **📥 Input**: outputs from `03-project-text-to-roles.ipynb`
+      
+      **↗️ Output**: `role-analysis/plots/*` containing visualizations.
+      </details>
+
+## 6. Run prompt injection role analysis
+The below notebooks perform the causal mechanistic analysis using the probes trained in the previous section, but now to analyze the prompt injections from sections 3-4.
+<p align="center">
+  <img src="docs/cotness-redteam.png">
+</p>
+Run the notebooks in this section to: (1-2) generate activations from the CoT Forgery prompts + generations in the previous section; (3) use the role probes; (4) visualize results.
+
+1. **Generate activations from user Cot Forgery attacks**
+    - **🚀 Run**: `role-injection-analysis/02-export-user-injection-activations.ipynb` 
     - <details><summary>Description</summary>
       
       **📚 Description**: Takes the CoT Forgery results from the prior user-injection section and runs forward passes to export layer-by-layer activations for either of the `gpt-oss-*` models.
@@ -141,46 +182,35 @@ Run the notebooks in this section to: (1) create role probe training data; (2-3)
       **↗️ Output**: Activations and related token-mapping metadata stored in `activations-redteam/{model_name}`.
       </details>
 
-3. **(Optional) Generate activations from agent Cot Forgery attacks**
-    - **🚀 Run**: `role-analysis/03-export-agent-activations.ipynb`
+2. **(Optional) Generate activations from agent Cot Forgery attacks**
+    - **🚀 Run**: `role-injection-analysis/03-export-agent-activations.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Takes the CoT Forgery results from the prior agent-injection section and runs forward passes to export layer-by-layer activations for either of the `gpt-oss-*` models. Skip this if you don't care about role space analysis of agent injections. 
       
-      **📥 Input**: outputs from `tool-injections/01-run-injections-gpt-oss.ipynb`.
+      **📥 Input**: outputs from `tool-injections/01-run-injections-gpt-oss.ipynb`
       
       **↗️ Output**: Activations and related token-mapping metadata stored in `activations-agent/{model_name}`.
       </details>
 
-4. **Train role-space probes**
-    - **🚀 Run**: `role-analysis/04-train-role-probes.ipynb`
-    - <details><summary>Description</summary>
-      
-      **📚 Description**: Trains the role-space probes.
-      
-      **📥 Input**: outputs from `01-export-c4-activations.ipynb`.
-      
-      **↗️ Output**: `role-analysis/probes/*` containing the trained probes.
-      </details>
-
-5. **Project CoT Forgery attacks into role space**
-    - **🚀 Run**: `role-analysis/05-project-role-probes.ipynb`; skip the last section if you skipped #3 don't care about role analysis of agent injections.
+3. **Project CoT Forgery attacks into role space**
+    - **🚀 Run**: `role-injection-analysis/03-project-role-probes.ipynb`; skip the last section if you skipped #3 don't care about role analysis of agent injections
     - <details><summary>Description</summary>
       
       **📚 Description**: Uses the probes to conduct causal mech interp analysis on the CoT Forgery activations.
       
-      **📥 Input**: outputs from `04-train-role-probes.ipynb`, `02-export-user-injection-activations.ipynb`, and `03-export-agent-activations.ipynb` (optional, needed to conduct role analysis of agent injections).
+      **📥 Input**: outputs from `role-analysis/02-train-role-probes.ipynb`, `01-export-user-injection-activations.ipynb`, and `02-export-agent-activations.ipynb` (optional, needed to conduct role analysis of agent injections).
       
-      **↗️ Output**: `role-analysis/exports/*` containing dumped results.
+      **↗️ Output**: `role-injection-analysis/exports/*` containing dumped results.
       </details>
 
-6. **(Optional) Visualize results**
-    - **🚀 Run**: `role-analysis/06-plot-test-probe-results.ipynb`, `role-analysis/07-plot-injection-probe-results.ipynb`, `role-analysis/08-plot-agent-probe-results.ipynb`
+4. **(Optional) Visualize results**
+    - **🚀 Run**: `role-injection-analysis/04-plot-injection-probe-results.ipynb`, `role-injection-analysis/05-plot-agent-probe-results.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Plots results.
       
-      **📥 Input**: outputs from `05-project-role-probes.ipynb`
+      **📥 Input**: outputs from `02-project-role-probes.ipynb`
       
-      **↗️ Output**: `role-analysis/plots/*` containing visualizations.
+      **↗️ Output**: `role-injection-analysis/plots/*` containing visualizations.
       </details>
