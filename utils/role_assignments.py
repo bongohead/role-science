@@ -269,6 +269,222 @@ def label_qwen3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         .reset_index(drop=True)
     )    
 
+def label_glm4_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Label tokens for GLM-4.5 / GLM-4.6 hybrid reasoning models, treating structural
+    newlines the same way we do for Qwen3:
+
+      * Newline after <|role|> sentinel (up to first newline) = header, non-content.
+      * Newlines inside <think>...</think> = non-content.
+      * Newlines in the immediate gap after </think> up to the first visible token
+        in that 'post-think' run = non-content.
+      * All other newlines are content.
+
+    Assumes the official GLM-4.5/4.6 chat template, with single-token sentinels.
+
+    Input:
+        sample_df: must include columns
+            - prompt_ix : global conversation index
+            - token_ix  : position within that prompt
+            - token     : decoded token string (single tokens)
+
+    Output:
+        original df +:
+            - seg_id          : segment id within prompt (0 = prefix [gMASK]<sop>)
+            - in_content_span : bool, True for non-wrapper tokens inside a segment
+            - role            : one of {system, user, assistant-cot,
+                                       assistant-final, assistant-commentary, tool}
+                               or None for non-content / prefix.
+    """
+
+    # ---- Special tokens (assumed to be single tokens) ----
+    SYSTEM     = '<|system|>'
+    USER       = '<|user|>'
+    ASSISTANT  = '<|assistant|>'
+    OBS        = '<|observation|>'
+
+    PREFIX_TOKENS = ['[gMASK]', '<sop>', '<eop>']
+
+    THINK_OPEN, THINK_CLOSE   = '<think>', '</think>'
+    TCALL_OPEN, TCALL_CLOSE   = '<tool_call>', '</tool_call>'
+    TRESP_OPEN, TRESP_CLOSE   = '<tool_response>', '</tool_response>'
+    ARGK_OPEN, ARGK_CLOSE     = '<arg_key>', '</arg_key>'
+    ARGV_OPEN, ARGV_CLOSE     = '<arg_value>', '</arg_value>'
+    NOTHINK                   = '/nothink'
+
+    # Newline detection (same pattern you used for Qwen)
+    NL_PATTERN = r'[\nĊĉĈ]+'
+
+    df = sample_df.sort_values(['prompt_ix', 'token_ix']).copy()
+
+    # ---- Segment boundaries: each GLM role sentinel starts a new segment ----
+    df['is_seg_start'] = df['token'].isin([SYSTEM, USER, ASSISTANT, OBS])
+    df['seg_id'] = df.groupby('prompt_ix')['is_seg_start'].cumsum()
+
+    # seg_id == 0: prefix region (e.g. [gMASK]<sop>)
+
+    # ---- Segment "kind": system / user / assistant / observation ----
+    df['role_token'] = df['token'].where(df['is_seg_start'])
+    df['seg_role_token'] = (
+        df.groupby(['prompt_ix', 'seg_id'])['role_token']
+          .transform('first')
+          .fillna('')
+    )
+
+    df['seg_kind'] = np.select(
+        [
+            df['seg_role_token'].eq(ASSISTANT),
+            df['seg_role_token'].eq(USER),
+            df['seg_role_token'].eq(SYSTEM),
+            df['seg_role_token'].eq(OBS),
+        ],
+        ['assistant', 'user', 'system', 'observation'],
+        default=None,
+    )
+
+    # ---- Newline & "header" detection (Qwen-style) ----
+    df['has_nl'] = df['token'].str.contains(NL_PATTERN, regex=True)
+
+    by_seg = df.groupby(['prompt_ix', 'seg_id'], sort=False)
+
+    df['nl_cum'] = by_seg['has_nl'].cumsum()
+    df['is_first_nl'] = df['has_nl'] & df['nl_cum'].eq(1)
+    df['before_header'] = df['nl_cum'].eq(0)
+
+    # Header tokens: everything after the role sentinel up to (and including) the
+    # first newline in that segment. For GLM this usually captures the single
+    # '\n' right after <|role|>.
+    df['is_header_token'] = (
+        (df['seg_id'] > 0)
+        & ~df['is_seg_start']
+        & (df['before_header'] | df['is_first_nl'])
+    )
+
+    # ---- Tag markers for nested spans ----
+    df['is_think_open'] = df['token'].eq(THINK_OPEN)
+    df['is_think_close'] = df['token'].eq(THINK_CLOSE)
+
+    df['is_tcall_open'] = df['token'].eq(TCALL_OPEN)
+    df['is_tcall_close'] = df['token'].eq(TCALL_CLOSE)
+
+    df['is_tresp_open'] = df['token'].eq(TRESP_OPEN)
+    df['is_tresp_close'] = df['token'].eq(TRESP_CLOSE)
+
+    df['is_argk_open'] = df['token'].eq(ARGK_OPEN)
+    df['is_argk_close'] = df['token'].eq(ARGK_CLOSE)
+
+    df['is_argv_open'] = df['token'].eq(ARGV_OPEN)
+    df['is_argv_close'] = df['token'].eq(ARGV_CLOSE)
+
+    df['is_nothink'] = df['token'].eq(NOTHINK)
+
+    # ---- Nested span membership: <think>..., <tool_call>... ----
+    df['think_open_cum'] = by_seg['is_think_open'].cumsum()
+    df['think_close_cum'] = by_seg['is_think_close'].cumsum()
+    df['in_think'] = df['think_open_cum'] > df['think_close_cum']
+
+    df['tcall_open_cum'] = by_seg['is_tcall_open'].cumsum()
+    df['tcall_close_cum'] = by_seg['is_tcall_close'].cumsum()
+    df['in_tool_call'] = df['tcall_open_cum'] > df['tcall_close_cum']
+
+    # ---- "Body" tokens: inside a segment, past its header ----
+    df['in_body'] = (df['seg_id'] > 0) & ~df['is_header_token']
+
+    # ---- Baseline "tag" mask (non-content wrappers & control tokens) ----
+    df['is_prefix'] = df['token'].isin(PREFIX_TOKENS) & df['seg_id'].eq(0)
+    df['is_role_sentinel'] = df['token'].isin([SYSTEM, USER, ASSISTANT, OBS])
+
+    df['is_tag0'] = df[
+        [
+            'is_prefix',
+            'is_role_sentinel',
+            'is_think_open', 'is_think_close',
+            'is_tcall_open', 'is_tcall_close',
+            'is_tresp_open', 'is_tresp_close',
+            'is_argk_open', 'is_argk_close',
+            'is_argv_open', 'is_argv_close',
+            'is_nothink',
+        ]
+    ].any(axis=1)
+
+    # ---- Structural whitespace (Qwen-style) ----
+    # 1) Newlines inside <think>...</think>
+    df['post_think_run'] = by_seg['is_think_close'].cumsum()
+    df['in_post_think'] = (
+        (df['post_think_run'] > 0)
+        & df['seg_kind'].eq('assistant')
+        & df['in_body']
+    )
+    df['non_ws_visible'] = df['in_post_think'] & ~df['has_nl'] & ~df['is_tag0']
+    df['seen_visible'] = (
+        df.groupby(['prompt_ix', 'seg_id', 'post_think_run'])['non_ws_visible']
+          .cumsum()
+          .gt(0)
+    )
+
+    df['ws_in_think'] = df['in_think'] & df['has_nl']
+    df['ws_after_think'] = df['in_post_think'] & df['has_nl'] & ~df['seen_visible']
+
+    df['is_tag'] = df['is_tag0'] | df['ws_in_think'] | df['ws_after_think']
+
+    # ---- Content span ----
+    df['in_content_span'] = df['in_body'] & ~df['is_tag']
+
+    # ---- Final role per token ----
+    df['role'] = np.select(
+        [
+            # Assistant reasoning
+            df['seg_kind'].eq('assistant') & df['in_content_span'] & df['in_think'],
+
+            # Assistant tool call (function name + arg_key/arg_value/JSON)
+            df['seg_kind'].eq('assistant') & df['in_content_span'] & df['in_tool_call'],
+
+            # Assistant visible answer (not in think, not in tool_call)
+            df['seg_kind'].eq('assistant') & df['in_content_span']
+            & ~df['in_think'] & ~df['in_tool_call'],
+
+            # User messages
+            df['seg_kind'].eq('user') & df['in_content_span'],
+
+            # System messages (includes tools preamble)
+            df['seg_kind'].eq('system') & df['in_content_span'],
+
+            # Tool outputs (observation segments)
+            df['seg_kind'].eq('observation') & df['in_content_span'],
+        ],
+        [
+            'assistant-cot',
+            'assistant-commentary',
+            'assistant-final',
+            'user',
+            'system',
+            'tool',
+        ],
+        default=None,
+    )
+
+    # ---- Cleanup helper columns ----
+    drop_cols = [
+        'is_seg_start', 'role_token', 'seg_role_token',
+        'has_nl', 'nl_cum', 'is_first_nl', 'before_header', 'is_header_token',
+        'is_think_open', 'is_think_close',
+        'is_tcall_open', 'is_tcall_close',
+        'is_tresp_open', 'is_tresp_close',
+        'is_argk_open', 'is_argk_close',
+        'is_argv_open', 'is_argv_close',
+        'is_nothink',
+        'think_open_cum', 'think_close_cum',
+        'tcall_open_cum', 'tcall_close_cum',
+        'in_body', 'is_prefix', 'is_role_sentinel', 'is_tag0',
+        'post_think_run', 'in_post_think', 'non_ws_visible', 'seen_visible',
+        'ws_in_think', 'ws_after_think',
+    ]
+    df = df.drop(columns=drop_cols, errors='ignore')
+
+    return df.reset_index(drop=True)
+
+
+
 def label_content_roles(model_architecture, sample_df):
     """
     Takes a token-level df, labels each token with its role only within the content span. Makes no assumption about the number of messages in the sequence.
@@ -287,6 +503,8 @@ def label_content_roles(model_architecture, sample_df):
         return label_gptoss_content_roles(sample_df)
     elif model_architecture == 'qwen3moe':
         return label_qwen3_content_roles(sample_df)
+    elif model_architecture == 'glm4moe':
+        return label_glm4_content_roles(sample_df)
 
     else:
         raise ValueError(f"Model prefix {model_architecture} not supported")

@@ -46,9 +46,10 @@ def render_single_qwen3moe(role: str, content: str) -> str:
     else:
         raise ValueError("Invalid role!")
 
-def render_single_glm45(role: str, content: str, *, tool_name = None) -> str:
+def render_single_glm4moe(role: str, content: str) -> str:
     """
-    Render a single GLM-4.5 message segment.
+    Render a single GLM-4 message segment.
+
     Notes:
       - Does NOT include the global '[gMASK]<sop>' prefix (add once per full prompt).
       - 'assistant-cot' emits only a <think> block; 'assistant-final' emits an empty think + visible content.
@@ -74,29 +75,27 @@ def render_single_message(model_architecture, role, content, tool_name = None) -
     Params:
         @model_architecture: One of several suppored model types, includes:
             - gptoss
+            - qwen3moe
+            - glm4moe
         @role: One of several suppored roles, includes:
             - system
-            - developer
+            - developer (only gpt-oss)
             - user
             - assistant-cot
             - assistant-final
             - tool
         @content: The content of the message.
-        @tool_name: The name of the tool to use.
+        @tool_name: The name of the tool to use (only for gpt-oss)
 
     Example:
-        messages = [
-            ('user', 'Hello, how are you?', None),
-            ('assistant-cot', 'I am good, thank you!', None),
-            ('assistant-final', 'My favorite color is blue.', None)
-            ('user', 'What is your favorite color?', None)
-        ]
-        render_prompt(messages)
+        render_single_message('gptoss', 'user', 'XXX', None)
     """
     if model_architecture == 'gptoss':
         res = render_single_gptoss(role, content, tool_name = tool_name)
     elif model_architecture == 'qwen3moe':
         res = render_single_qwen3moe(role, content)
+    elif model_architecture == 'glm4moe':
+        res = render_single_glm45(role, content)
     else:
         raise ValueError("Invalid model!")
 
@@ -113,6 +112,7 @@ def load_chat_template(parent_dir, model_architecture) -> str:
     Notes:
         - For Qwen3MoE, this:
             (1) prevents old <think></think> tags from being stripped.
+        - For GLM4MoE, this does not; it's just the standard chat template.
         - For GPT-OSS, this:
             (1) removes the default system prompt;
             (2) has {"role": "system", "content", "..."} propagate to the system prompt instead of the developer prompt;
