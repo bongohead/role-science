@@ -113,161 +113,167 @@ def label_qwen3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
 
     # Newline Qwen3 tokenizers
     NL_PATTERN = r'[\nĊĉĈ]+'
-    return (
-        sample_df
-        .sort_values(['prompt_ix', 'token_ix'])
 
-        # Segment boundaries & basic markers
-        .assign(
-            seg_id = lambda d: d.groupby('prompt_ix')['token'].transform(lambda s: (s == IM_START).cumsum()),
-            is_start = lambda d: d['token'].eq(IM_START),
-            is_end = lambda d: d['token'].eq(IM_END),
-            has_nl = lambda d: d['token'].str.contains(NL_PATTERN, regex=True),
-        )
+    df = sample_df.sort_values(['prompt_ix', 'token_ix']).copy()
 
-        # Header/body split: header ends at the first newline after <|im_start|>role
-        .assign(
-            nl_cum = lambda d: d.groupby(['prompt_ix','seg_id'])['has_nl'].cumsum(),
-            is_first_nl = lambda d: d['has_nl'] & d['nl_cum'].eq(1),
-            before_header = lambda d: d['nl_cum'].eq(0),
+    # ---- Segment boundaries & basic markers ----
+    df['seg_id'] = (
+        df.groupby('prompt_ix', sort=False)['token']
+          .transform(lambda s: (s == IM_START).cumsum())
+    )
+    df['is_start'] = df['token'].eq(IM_START)
+    df['is_end'] = df['token'].eq(IM_END)
+    df['has_nl'] = df['token'].str.contains(NL_PATTERN, regex=True)
 
-            # header tokens: everything after <|im_start|> up to (and including) the first newline
-            is_header_token = lambda d: (d['seg_id'] > 0) & ~d['is_start'] & (d['before_header'] | d['is_first_nl']),
+    by_seg = df.groupby(['prompt_ix', 'seg_id'], sort=False)
 
-            before_end = lambda d: d.groupby(['prompt_ix','seg_id'])['is_end'].cumsum().eq(0),
+    # ---- Header/body split: header ends at the first newline after <|im_start|>role ----
+    df['nl_cum'] = by_seg['has_nl'].cumsum()
+    df['is_first_nl'] = df['has_nl'] & df['nl_cum'].eq(1)
+    df['before_header'] = df['nl_cum'].eq(0)
 
-            # Body tokens = inside a message, after header, before <|im_end|>
-            in_body = lambda d: (d['seg_id'] > 0) & ~d['is_header_token'] & d['before_end'],
-        )
+    # header tokens: everything after <|im_start|> up to (and including) the first newline
+    df['is_header_token'] = (
+        (df['seg_id'] > 0)
+        & ~df['is_start']
+        & (df['before_header'] | df['is_first_nl'])
+    )
 
-        # Nested regions: <think>, <tool_call>, <tool_response>
-        .assign(
-            is_think_open = lambda d: d['token'].eq(OPEN_THINK),
-            is_think_close = lambda d: d['token'].eq(CLOSE_THINK),
-            is_tcall_open = lambda d: d['token'].eq(OPEN_TCALL),
-            is_tcall_close = lambda d: d['token'].eq(CLOSE_TCALL),
-            is_tresp_open = lambda d: d['token'].eq(OPEN_TRESP),
-            is_tresp_close = lambda d: d['token'].eq(CLOSE_TRESP),
-        )
-        .assign(
-            think_open_cum = lambda d: d.groupby(['prompt_ix','seg_id'])['is_think_open'].cumsum(),
-            think_close_cum = lambda d: d.groupby(['prompt_ix','seg_id'])['is_think_close'].cumsum(),
-            in_think = lambda d: d['think_open_cum'] > d['think_close_cum'],
+    df['before_end'] = by_seg['is_end'].cumsum().eq(0)
 
-            tcall_open_cum = lambda d: d.groupby(['prompt_ix','seg_id'])['is_tcall_open'].cumsum(),
-            tcall_close_cum = lambda d: d.groupby(['prompt_ix','seg_id'])['is_tcall_close'].cumsum(),
-            in_tool_call = lambda d: d['tcall_open_cum'] > d['tcall_close_cum'],
+    # Body tokens = inside a message, after header, before <|im_end|>
+    df['in_body'] = (df['seg_id'] > 0) & ~df['is_header_token'] & df['before_end']
 
-            tresp_open_cum = lambda d: d.groupby(['prompt_ix','seg_id'])['is_tresp_open'].cumsum(),
-            tresp_close_cum = lambda d: d.groupby(['prompt_ix','seg_id'])['is_tresp_close'].cumsum(),
-            in_tool_resp = lambda d: d['tresp_open_cum'] > d['tresp_close_cum'],
-        )
+    # ---- Nested regions: <think>, <tool_call>, <tool_response> ----
+    df['is_think_open'] = df['token'].eq(OPEN_THINK)
+    df['is_think_close'] = df['token'].eq(CLOSE_THINK)
+    df['is_tcall_open'] = df['token'].eq(OPEN_TCALL)
+    df['is_tcall_close'] = df['token'].eq(CLOSE_TCALL)
+    df['is_tresp_open'] = df['token'].eq(OPEN_TRESP)
+    df['is_tresp_close'] = df['token'].eq(CLOSE_TRESP)
 
-        # Build the role header between <|im_start|> and the first newline (robust to newline sentinels)
-        .assign(
-            header_piece = lambda d: np.select(
-                [
-                    (d['seg_id'] > 0) & ~d['is_start'] & d['before_header'] & ~d['has_nl'],
-                    (d['seg_id'] > 0) & ~d['is_start'] & d['is_first_nl'],
-                ],
-                [
-                    d['token'],
-                    d['token'].str.split('\n', n=1, regex=False).str[0],
-                ],
-                default=None
-            )
-        )
-        .pipe(lambda d: d.merge(
-            d.groupby(['prompt_ix','seg_id'])['header_piece']
-                .agg(lambda s: ''.join([x for x in s.dropna().tolist()]))
-                .rename('header_line'),
-            on = ['prompt_ix','seg_id'], how = 'left'
-        ))
-        .drop(columns=['header_piece'])
-        .assign(header_line = lambda d: d['header_line'].fillna('').str.lower())
+    df['think_open_cum'] = by_seg['is_think_open'].cumsum()
+    df['think_close_cum'] = by_seg['is_think_close'].cumsum()
+    df['in_think'] = df['think_open_cum'] > df['think_close_cum']
 
-        # Coarse segment kind from header
-        .assign(
-            seg_kind = lambda d: np.select(
-                [
-                    d['header_line'].str.startswith('assistant'),
-                    d['header_line'].str.startswith('user'),
-                    d['header_line'].str.startswith('system'),
-                    d['header_line'].str.startswith('developer'),
-                ],
-                ['assistant', 'user', 'system', 'developer'],
-                default = None
-            )
-        )
+    df['tcall_open_cum'] = by_seg['is_tcall_open'].cumsum()
+    df['tcall_close_cum'] = by_seg['is_tcall_close'].cumsum()
+    df['in_tool_call'] = df['tcall_open_cum'] > df['tcall_close_cum']
 
-        # ----- Structural-whitespace filtering -----
-        # 1. Any newline tokens INSIDE <think>…</think> are non-content.
-        # 2. The entire RUN of newline tokens immediately AFTER </think> and BEFORE the first non-newline token in the same assistant 
-        #  message is non-content.
-        .assign(
-            # First, a base tag mask (wrappers we never label)
-            is_tag0 = lambda d: d[['is_start','is_end',
-                                   'is_think_open','is_think_close',
-                                   'is_tcall_open','is_tcall_close',
-                                   'is_tresp_open','is_tresp_close']].any(axis=1),
+    df['tresp_open_cum'] = by_seg['is_tresp_open'].cumsum()
+    df['tresp_close_cum'] = by_seg['is_tresp_close'].cumsum()
+    df['in_tool_resp'] = df['tresp_open_cum'] > df['tresp_close_cum']
 
-            # Identify "post-think" zones and whether we've seen real (non-newline, non-tag) content in them yet
-            post_think_run = lambda d: d.groupby(['prompt_ix','seg_id'])['is_think_close'].cumsum(),
-            in_post_think = lambda d: (d['post_think_run'] > 0) & d['seg_kind'].eq('assistant') & d['in_body'],
-            non_ws_visible = lambda d: d['in_post_think'] & ~d['has_nl'] & ~d['is_tag0'],  # first visible content after </think>
-            seen_visible = lambda d: d.groupby(['prompt_ix','seg_id','post_think_run'])['non_ws_visible'].cumsum().gt(0),
+    # ---- Build the role header between <|im_start|> and the first newline ----
+    df['header_piece'] = np.select(
+        [
+            (df['seg_id'] > 0) & ~df['is_start'] & df['before_header'] & ~df['has_nl'],
+            (df['seg_id'] > 0) & ~df['is_start'] & df['is_first_nl'],
+        ],
+        [
+            df['token'],
+            df['token'].str.split('\n', n=1, regex=False).str[0],
+        ],
+        default=None
+    )
 
-            # Newlines inside think OR in the immediate gap after </think> (before first visible content)
-            ws_in_think = lambda d: d['in_think'] & d['has_nl'],
-            ws_after_think = lambda d: d['in_post_think'] & d['has_nl'] & ~d['seen_visible'],
+    header_line = (
+        by_seg['header_piece']
+        .agg(lambda s: ''.join([x for x in s.dropna().tolist()]))
+        .rename('header_line')
+    )
+    df = df.merge(header_line, on=['prompt_ix', 'seg_id'], how='left')
+    df = df.drop(columns=['header_piece'])
 
-            # Final tag mask includes structural whitespace
-            is_tag = lambda d: d['is_tag0'] | d['ws_in_think'] | d['ws_after_think'],
+    df['header_line'] = df['header_line'].fillna('').str.lower()
 
-            # Body minus wrappers => content span
-            in_content_span = lambda d: d['in_body'] & ~d['is_tag'],
-        )
+    # ---- Coarse segment kind from header ----
+    df['seg_kind'] = np.select(
+        [
+            df['header_line'].str.startswith('assistant'),
+            df['header_line'].str.startswith('user'),
+            df['header_line'].str.startswith('system'),
+            df['header_line'].str.startswith('developer'),
+        ],
+        ['assistant', 'user', 'system', 'developer'],
+        default=None
+    )
 
-        # Final role per token
-        .assign(
-            role = lambda d: np.select(
-                [
-                    (d['seg_kind'].eq('assistant')) & d['in_content_span'] & d['in_think'],
-                    (d['seg_kind'].eq('assistant')) & d['in_content_span'] & d['in_tool_call'],
-                    (d['seg_kind'].eq('assistant')) & d['in_content_span'] & ~d['in_think'] & ~d['in_tool_call'],
+    # ----- Structural-whitespace filtering -----
+    # 1. Any newline tokens INSIDE <think>…</think> are non-content.
+    # 2. The entire RUN of newline tokens immediately AFTER </think> and BEFORE the
+    #    first non-newline token in the same assistant message is non-content.
+    df['is_tag0'] = df[
+        ['is_start', 'is_end',
+         'is_think_open', 'is_think_close',
+         'is_tcall_open', 'is_tcall_close',
+         'is_tresp_open', 'is_tresp_close']
+    ].any(axis=1)
 
-                    (d['seg_kind'].eq('user')) & d['in_content_span'] & d['in_tool_resp'],
-                    (d['seg_kind'].eq('user')) & d['in_content_span'] & ~d['in_tool_resp'],
+    df['post_think_run'] = by_seg['is_think_close'].cumsum()
+    df['in_post_think'] = (
+        (df['post_think_run'] > 0)
+        & df['seg_kind'].eq('assistant')
+        & df['in_body']
+    )
+    df['non_ws_visible'] = df['in_post_think'] & ~df['has_nl'] & ~df['is_tag0']  # first visible content after </think>
+    df['seen_visible'] = (
+        df.groupby(['prompt_ix', 'seg_id', 'post_think_run'], sort=False)['non_ws_visible']
+          .cumsum()
+          .gt(0)
+    )
 
-                    (d['seg_kind'].eq('system')) & d['in_content_span'],
-                    (d['seg_kind'].eq('developer')) & d['in_content_span'],
-                ],
-                [
-                    'assistant-cot',
-                    'assistant-commentary',  # <tool_call> payload JSON
-                    'assistant-final',
-                    'tool',                  # <tool_response> payload JSON
-                    'user',
-                    'system',
-                    'developer',
-                ],
-                default=None
-            )
-        )
+    df['ws_in_think'] = df['in_think'] & df['has_nl']
+    df['ws_after_think'] = df['in_post_think'] & df['has_nl'] & ~df['seen_visible']
 
-        # Cleanup helpers
-        .drop(
-            columns = [
-                'is_start','is_end','has_nl','nl_cum','is_first_nl','before_header','is_header_token','before_end','in_body',
-                'is_think_open','is_think_close','is_tcall_open','is_tcall_close','is_tresp_open','is_tresp_close',
-                'think_open_cum','think_close_cum','tcall_open_cum','tcall_close_cum','tresp_open_cum','tresp_close_cum',
-                'header_line','seg_kind','is_tag0','post_think_run','in_post_think','non_ws_visible','seen_visible',
-                'ws_in_think','ws_after_think'
-            ],
-            errors = 'ignore'
-        )
-        .reset_index(drop=True)
-    )    
+    df['is_tag'] = df['is_tag0'] | df['ws_in_think'] | df['ws_after_think']
+
+    # Body minus wrappers => content span
+    df['in_content_span'] = df['in_body'] & ~df['is_tag']
+
+    # ---- Final role per token ----
+    df['role'] = np.select(
+        [
+            (df['seg_kind'].eq('assistant')) & df['in_content_span'] & df['in_think'],
+            (df['seg_kind'].eq('assistant')) & df['in_content_span'] & df['in_tool_call'],
+            (df['seg_kind'].eq('assistant')) & df['in_content_span'] & ~df['in_think'] & ~df['in_tool_call'],
+
+            (df['seg_kind'].eq('user')) & df['in_content_span'] & df['in_tool_resp'],
+            (df['seg_kind'].eq('user')) & df['in_content_span'] & ~df['in_tool_resp'],
+
+            (df['seg_kind'].eq('system')) & df['in_content_span'],
+            (df['seg_kind'].eq('developer')) & df['in_content_span'],
+        ],
+        [
+            'assistant-cot',
+            'assistant-commentary',  # <tool_call> payload JSON
+            'assistant-final',
+            'tool',                  # <tool_response> payload JSON
+            'user',
+            'system',
+            'developer',
+        ],
+        default=None
+    )
+
+    # ---- Cleanup helpers ----
+    df = df.drop(
+        columns=[
+            'is_start', 'is_end', 'has_nl', 'nl_cum', 'is_first_nl',
+            'before_header', 'is_header_token', 'before_end', 'in_body',
+            'is_think_open', 'is_think_close', 'is_tcall_open', 'is_tcall_close',
+            'is_tresp_open', 'is_tresp_close',
+            'think_open_cum', 'think_close_cum',
+            'tcall_open_cum', 'tcall_close_cum',
+            'tresp_open_cum', 'tresp_close_cum',
+            'header_line', 'seg_kind', 'is_tag0',
+            'post_think_run', 'in_post_think', 'non_ws_visible', 'seen_visible',
+            'ws_in_think', 'ws_after_think',
+        ],
+        errors='ignore'
+    )
+
+    return df.reset_index(drop=True)
 
 def label_glm4_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -501,7 +507,7 @@ def label_content_roles(model_architecture, sample_df):
     """
     if model_architecture == 'gptoss':
         return label_gptoss_content_roles(sample_df)
-    elif model_architecture == 'qwen3moe':
+    elif model_architecture in ['qwen3moe', 'qwen3vlmoe']:
         return label_qwen3_content_roles(sample_df)
     elif model_architecture == 'glm4moe':
         return label_glm4_content_roles(sample_df)

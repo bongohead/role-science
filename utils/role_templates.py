@@ -92,10 +92,10 @@ def render_single_message(model_architecture, role, content, tool_name = None) -
     """
     if model_architecture == 'gptoss':
         res = render_single_gptoss(role, content, tool_name = tool_name)
-    elif model_architecture == 'qwen3moe':
+    elif model_architecture in ['qwen3moe', 'qwen3vlmoe']:
         res = render_single_qwen3moe(role, content)
     elif model_architecture == 'glm4moe':
-        res = render_single_glm45(role, content)
+        res = render_single_glm4moe(role, content)
     else:
         raise ValueError("Invalid model!")
 
