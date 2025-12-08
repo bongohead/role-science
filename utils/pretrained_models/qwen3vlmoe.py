@@ -53,7 +53,9 @@ def run_qwen3vlmoe_return_topk(model, input_ids, attention_mask, pixel_values = 
         image_embeds = torch.cat(image_embeds_list, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
 
         # Mask of where image placeholder tokens are
-        image_mask, _ = vl_model.get_placeholder_mask(input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds)
+        image_mask, _ = vl_model.get_placeholder_mask(
+            input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds
+        )
         # Replace placeholder token embeddings with image embeddings
         inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
 
@@ -61,7 +63,9 @@ def run_qwen3vlmoe_return_topk(model, input_ids, attention_mask, pixel_values = 
     if pixel_values_videos is not None:
         video_embeds_list, deepstack_video_embeds = vl_model.get_video_features(pixel_values_videos, video_grid_thw)
         video_embeds = torch.cat(video_embeds_list, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
-        _, video_mask = vl_model.get_placeholder_mask(input_ids, inputs_embeds=inputs_embeds, video_features=video_embeds)
+        _, video_mask = vl_model.get_placeholder_mask(
+            input_ids, inputs_embeds=inputs_embeds, video_features=video_embeds
+        )
         inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
 
     # DeepStack visual masks/embeds (matches Qwen3VLMoeModel.forward)
@@ -153,77 +157,24 @@ def run_qwen3vlmoe_return_topk(model, input_ids, attention_mask, pixel_values = 
             )
 
         if is_moe_layer:
-            # ---- Qwen3VLMoeTextSparseMoeBlock manual re-implementation ----
+            # ---- MoE *introspection only* (do NOT replace HF forward) ----
             batch_size, seq_length, hidden_dim = hidden_state.shape
             hs_flat = hidden_state.view(-1, hidden_dim)  # (BN, D)
 
-            # Gate: linear + softmax + top-k
-            router_logits = torch.nn.functional.linear(
-                hs_flat, layer.mlp.gate.weight
-            )  # (BN, num_experts)
-            router_probs = torch.nn.functional.softmax(
+            # Gate: linear + softmax + top-k (mirror Qwen3VLMoeTextSparseMoeBlock)
+            router_logits = layer.mlp.gate(hs_flat)  # (BN, num_experts)
+            routing_weights = torch.nn.functional.softmax(
                 router_logits, dim=-1, dtype=torch.float
             )
             routing_weights_top, selected_experts = torch.topk(
-                router_probs,
+                routing_weights,
                 layer.mlp.top_k,
                 dim=-1,
                 sorted=True,
-            )  # (BN, top_k) each
+            )  # (BN, top_k)
 
             # Renormalize over top-k
-            routing_weights_top /= routing_weights_top.sum(dim=-1, keepdim=True)
-            routing_weights_top = routing_weights_top.to(router_logits.dtype)  # keep f32
-            # For combining experts we only need the top-k weights; no dense scatter needed.
-
-            # Experts: apply per-expert MLP with top-k routing
-            final_flat = torch.zeros_like(hs_flat)  # (BN, D)
-
-            # One-hot over experts: (num_experts, top_k, BN)
-            expert_mask = torch.nn.functional.one_hot(
-                selected_experts,
-                num_classes=layer.mlp.experts.num_experts,
-            ).permute(2, 1, 0)
-            expert_hits = torch.greater(
-                expert_mask.sum(dim=(-1, -2)), 0
-            ).nonzero()  # (num_hits, 1)
-
-            if return_hidden_states:
-                layer_expert_outputs = torch.zeros(
-                    hs_flat.size(0),
-                    layer.mlp.top_k,
-                    hidden_dim,
-                    dtype=hs_flat.dtype,
-                    device=hs_flat.device,
-                )
-
-            for expert_idx_tensor in expert_hits:
-                expert_idx = expert_idx_tensor[0]
-
-                top_k_pos, token_idx = torch.where(expert_mask[expert_idx])
-                # token_idx: which tokens chose this expert
-                # top_k_pos: which top-k slot (0 = highest prob, etc)
-
-                current_state = hs_flat[token_idx]  # (n_tokens_for_expert, D)
-
-                # gate_up_proj: (num_experts, hidden_size, 2 * expert_dim)
-                gate_up = current_state @ layer.mlp.experts.gate_up_proj[expert_idx]
-                gate, up = gate_up.chunk(2, dim=-1)
-                current_expert_output = layer.mlp.experts.act_fn(gate) * up
-                # down_proj: (num_experts, expert_dim, hidden_size)
-                current_expert_output = current_expert_output @ layer.mlp.experts.down_proj[expert_idx]
-
-                # Weight by routing probability
-                weighted = current_expert_output * routing_weights_top[token_idx, top_k_pos, None]
-                final_flat.index_add_(0, token_idx, weighted.to(final_flat.dtype))
-
-                if return_hidden_states:
-                    layer_expert_outputs[token_idx, top_k_pos] = current_expert_output.to(
-                        layer_expert_outputs.dtype
-                    )
-
-            final_hidden_states = final_flat.view(batch_size, seq_length, hidden_dim)
-            hidden_state = residual + final_hidden_states
+            routing_weights_top = routing_weights_top / routing_weights_top.sum(dim=-1, keepdim=True)
 
             # Collect MoE stats for this layer
             all_topk_experts.append(selected_experts.detach().cpu())  # (BN, top_k)
@@ -233,12 +184,51 @@ def run_qwen3vlmoe_return_topk(model, input_ids, attention_mask, pixel_values = 
 
             if return_hidden_states:
                 all_router_logits.append(router_logits.detach().cpu())
+
+                # ---- Optional: per-expert outputs (pre-weighting), side path ----
+                layer_expert_outputs = torch.zeros(
+                    hs_flat.size(0),
+                    layer.mlp.top_k,
+                    hidden_dim,
+                    dtype=hs_flat.dtype,
+                    device=hs_flat.device,
+                )
+
+                # One-hot over experts: (num_experts, top_k, BN)
+                expert_mask = torch.nn.functional.one_hot(
+                    selected_experts,
+                    num_classes=layer.mlp.experts.num_experts,
+                ).permute(2, 1, 0)
+                expert_hits = torch.greater(
+                    expert_mask.sum(dim=(-1, -2)), 0
+                ).nonzero()  # (num_hits, 1)
+
+                for expert_idx_tensor in expert_hits:
+                    expert_idx = expert_idx_tensor[0]
+
+                    top_k_pos, token_idx = torch.where(expert_mask[expert_idx])
+                    # token_idx: which tokens chose this expert
+                    # top_k_pos: which top-k slot (0 = highest prob, etc)
+
+                    current_state = hs_flat[token_idx]  # (n_tokens_for_expert, D)
+
+                    # gate_up_proj: (num_experts, hidden_size, 2 * expert_dim)
+                    gate_up = current_state @ layer.mlp.experts.gate_up_proj[expert_idx]
+                    gate, up = gate_up.chunk(2, dim=-1)
+                    current_expert_output = layer.mlp.experts.act_fn(gate) * up
+                    # down_proj: (num_experts, expert_dim, hidden_size)
+                    current_expert_output = current_expert_output @ layer.mlp.experts.down_proj[expert_idx]
+
+                    # Store *pre-weighting* expert outputs
+                    layer_expert_outputs[token_idx, top_k_pos] = current_expert_output.to(
+                        layer_expert_outputs.dtype
+                    )
+
                 all_expert_outputs.append(layer_expert_outputs.detach().cpu())
 
-        else:
-            # Dense MLP
-            mlp_out = layer.mlp(hidden_state)
-            hidden_state = residual + mlp_out
+        # >>> IMPORTANT CHANGE: always use HF's mlp for the actual forward <<<
+        mlp_out = layer.mlp(hidden_state)
+        hidden_state = residual + mlp_out
 
         # DeepStack visual integration (matches Qwen3VLMoeTextModel.forward)
         if deepstack_visual_embeds is not None and layer_idx in range(len(deepstack_visual_embeds)):
