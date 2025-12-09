@@ -46,6 +46,37 @@ def render_single_qwen3moe(role: str, content: str) -> str:
     else:
         raise ValueError("Invalid role!")
 
+def render_single_olmo3(role: str, content: str) -> str:
+    """
+    Wrap arbitrary text as a single Olmo-3 Think-style message.
+
+    Notes:
+      - Uses the Olmo-3 ChatML-style envelope:
+            <|im_start|>role\\n ... <|im_end|>
+      - 'assistant-cot' is rendered as an assistant message whose content
+        lives inside a <think>...</think> block only (no visible answer).
+      - 'assistant-final' is rendered as an assistant message with an empty
+        <think>...</think> stub followed by visible content, paralleling the
+        Qwen3 helper.
+      - 'tool' represents TOOL OUTPUT, which Olmo-3 encodes as an
+        `environment` role; we map your 'tool' role to that.
+    """
+    if role == 'system':
+        return f"<|im_start|>system\n{content}<|im_end|>\n"
+    elif role == 'user':
+        return f"<|im_start|>user\n{content}<|im_end|>\n"
+    elif role == 'assistant-cot':
+        return f"<|im_start|>assistant\n<think>{content}</think><|im_end|>\n"
+    elif role == 'assistant-final':
+        # return f"<|im_start|>assistant\n{content}<|im_end|>\n"
+        return f"<|im_start|>assistant\n<think></think>{content}<|im_end|>\n"
+        # return f"<|im_start|>assistant\n{content}<|im_end|>\n" ## OR try this - no think at all (instruct variant)
+    elif role == 'tool': # Tool output / environment feedback Olmo-3 uses the `environment` role for this.
+        return f"<|im_start|>environment\n{content}<|im_end|>\n"
+    else:
+        raise ValueError("Invalid role!")
+
+
 def render_single_glm4moe(role: str, content: str) -> str:
     """
     Render a single GLM-4 message segment.
@@ -96,6 +127,9 @@ def render_single_message(model_architecture, role, content, tool_name = None) -
         res = render_single_qwen3moe(role, content)
     elif model_architecture == 'glm4moe':
         res = render_single_glm4moe(role, content)
+    elif model_architecture == 'olmo3':
+        res = render_single_olmo3(role, content)
+
     else:
         raise ValueError("Invalid model!")
 
