@@ -490,42 +490,19 @@ def label_glm4_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
 
     return df.reset_index(drop=True)
 
+
 def label_olmo3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     """
     Label tokens with Olmo-3 chat roles, content-only and multi-message safe.
 
     Designed for Olmo-3 Think / RLZero-style templates (with <think>...</think>),
     but will also behave sensibly on Instruct (no <think> blocks).
-
-    Assumptions:
-      - Messages are ChatML-style:
-            <|im_start|>role\\n ... <|im_end|>
-        with final assistant often closed by <|endoftext|> instead of <|im_end|>.
-      - Roles: system, user, assistant, environment (tool aliasing environment).
-      - Think models use <think>...</think> inside assistant messages for CoT.
-      - Tool calls live inside <function_calls>...</function_calls> in assistant
-        segments; tool outputs are 'environment' segments.
-
-    Input:
-        sample_df: must include columns:
-            - prompt_ix : global conversation index
-            - token_ix  : position within that prompt
-            - token     : decoded token string
-
-    Output:
-        original df +:
-            - seg_id          : segment id within prompt (0 = prefix before first <|im_start|>)
-            - in_content_span : bool, True for non-wrapper tokens inside a segment
-            - role            : one of {system, user, assistant-cot,
-                                       assistant-final, assistant-commentary, tool}
-                               or None for non-content / prefix.
     """
 
     IM_START, IM_END, EOS = '<|im_start|>', '<|im_end|>', '<|endoftext|>'
     OPEN_FUNCS, CLOSE_FUNCS = '<functions>', '</functions>'
     OPEN_FCALLS, CLOSE_FCALLS = '<function_calls>', '</function_calls>'
 
-    # Newline pattern (same as Qwen/GLM)
     NL_PATTERN = r'[\nĊĉĈ]+'
 
     df = sample_df.sort_values(['prompt_ix', 'token_ix']).copy()
@@ -538,22 +515,22 @@ def label_olmo3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     df['is_end'] = df['token'].eq(IM_END)
     df['is_eos'] = df['token'].eq(EOS)
     df['has_nl'] = df['token'].str.contains(NL_PATTERN, regex=True)
+    df['is_pure_nl'] = df['token'].str.fullmatch(NL_PATTERN).fillna(False)
 
     by_seg = df.groupby(['prompt_ix', 'seg_id'], sort=False)
 
-    # ---- Header/body split: header ends at the first newline after <|im_start|>role ----
+    # ---- Header/body split ----
     df['nl_cum'] = by_seg['has_nl'].cumsum()
     df['is_first_nl'] = df['has_nl'] & df['nl_cum'].eq(1)
     df['before_header'] = df['nl_cum'].eq(0)
 
-    # header tokens: everything after <|im_start|> up to (and including) the first newline
     df['is_header_token'] = (
         (df['seg_id'] > 0)
         & ~df['is_start']
         & (df['before_header'] | df['is_first_nl'])
     )
 
-    # Treat both <|im_end|> and <|endoftext|> as "close" sentinels for segments
+    # ---- Close sentinels ----
     df['is_close'] = df['is_end'] | df['is_eos']
     df['before_end'] = by_seg['is_close'].cumsum().eq(0)
 
@@ -570,7 +547,7 @@ def label_olmo3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     df['fcalls_close_cum'] = by_seg['is_fcalls_close'].cumsum()
     df['in_function_calls'] = df['fcalls_open_cum'] > df['fcalls_close_cum']
 
-    # ---- Build the role header between <|im_start|> and the first newline ----
+    # ---- Build the role header ----
     df['header_piece'] = np.select(
         [
             (df['seg_id'] > 0) & ~df['is_start'] & df['before_header'] & ~df['has_nl'],
@@ -589,6 +566,7 @@ def label_olmo3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         .groupby([df['prompt_ix'], df['seg_id']], sort=False)
         .transform('sum')
     )
+
     df = df.drop(columns=['header_piece'])
     df['header_line'] = df['header_line'].fillna('').str.lower()
 
@@ -620,7 +598,7 @@ def label_olmo3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         ]
     ].any(axis=1)
 
-    # ---- Per-segment pass to handle <think>...</think> that span multiple tokens ----
+    # ---- Per-segment pass to handle <think>...</think> across tokens ----
     def _mark_think_region(group: pd.DataFrame) -> pd.DataFrame:
         tokens = group['token'].tolist()
         n = len(tokens)
@@ -630,7 +608,6 @@ def label_olmo3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
             group['ws_after_think_local'] = False
             return group
 
-        # Character offsets of each token within the segment string
         lengths = np.fromiter((len(t) for t in tokens), dtype=int)
         starts = np.empty(n, dtype=int)
         starts[0] = 0
@@ -647,19 +624,43 @@ def label_olmo3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         is_think_tag = np.zeros(n, dtype=bool)
         ws_after_think = np.zeros(n, dtype=bool)
 
-        # Pair opens and closes in order
+        # tokens with only tag punctuation / whitespace
+        punct_only = group['token'].str.fullmatch(r'[<>/ \t\r\n]+').fillna(False).to_numpy()
+
         num_pairs = min(len(open_matches), len(close_matches))
         for k in range(num_pairs):
             o_start, o_end = open_matches[k].span()
             c_start, c_end = close_matches[k].span()
 
-            # Tag tokens = tokens fully contained inside the tag span
+            if c_start <= o_end:
+                # Degenerate case: <think></think> (no inner content)
+                # Tag tokens:
+                #   - fully inside open/close tag spans, OR
+                #   - any punctuation-only token overlapping the whole tag region.
+                open_tag = (starts >= o_start) & (ends <= o_end)
+                close_tag = (starts >= c_start) & (ends <= c_end)
+                bridge_punct = (starts < c_end) & (ends > o_start) & punct_only
+                is_think_tag |= open_tag | close_tag | bridge_punct
+
+                # Newlines immediately after </think> until first non-newline, non-tag token
+                after_idxs = np.where(starts >= c_end)[0]
+                for idx in after_idxs:
+                    if group['is_tag0'].iloc[idx] or is_think_tag[idx]:
+                        continue
+                    if group['is_pure_nl'].iloc[idx]:
+                        ws_after_think[idx] = True
+                        continue
+                    break
+
+                # No in_think content for this pair
+                continue
+
+            # Normal case: real gap between <think> and </think>
             open_tag = (starts >= o_start) & (ends <= o_end)
             close_tag = (starts >= c_start) & (ends <= c_end)
             is_think_tag |= open_tag | close_tag
 
-            # In-think content: any token overlapping the region (o_end, c_start),
-            # excluding pure tag tokens.
+            # In-think content: tokens overlapping (o_end, c_start), excluding pure tag tokens
             content_mask = (ends > o_end) & (starts < c_start)
             content_mask &= ~is_think_tag
             in_think |= content_mask
@@ -667,13 +668,11 @@ def label_olmo3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
             # Newlines immediately after </think> until first non-newline, non-tag token
             after_idxs = np.where(starts >= c_end)[0]
             for idx in after_idxs:
-                # Treat structural and think-tag tokens as non-visible
                 if group['is_tag0'].iloc[idx] or is_think_tag[idx]:
                     continue
-                if group['has_nl'].iloc[idx]:
+                if group['is_pure_nl'].iloc[idx]:
                     ws_after_think[idx] = True
                     continue
-                # First visible non-newline content after </think>
                 break
 
         group['in_think'] = in_think
@@ -687,10 +686,10 @@ def label_olmo3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         .apply(_mark_think_region)
     )
 
-    # ---- Structural whitespace using in_think ----
-    df['ws_in_think'] = df['in_think'] & df['has_nl']
+    # ---- Structural whitespace ----
+    # Do NOT strip newlines inside <think>…</think>; they're part of CoT content.
+    df['ws_in_think'] = False
 
-    # Final tag mask includes think tags + structural whitespace
     df['is_tag'] = df['is_tag0'] | df['is_think_tag'] | df['ws_in_think'] | df['ws_after_think_local']
 
     # Body minus wrappers => content span
@@ -699,23 +698,12 @@ def label_olmo3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     # ---- Final role per token ----
     df['role'] = np.select(
         [
-            # Assistant reasoning
             df['seg_kind'].eq('assistant') & df['in_content_span'] & df['in_think'],
-
-            # Assistant tool call payload (<function_calls> pythonic calls)
             df['seg_kind'].eq('assistant') & df['in_content_span'] & df['in_function_calls'],
-
-            # Assistant visible answer (not in think, not in function_calls)
             df['seg_kind'].eq('assistant') & df['in_content_span']
             & ~df['in_think'] & ~df['in_function_calls'],
-
-            # User messages
             df['seg_kind'].eq('user') & df['in_content_span'],
-
-            # System messages (instructions + optional <functions> payloads)
             df['seg_kind'].eq('system') & df['in_content_span'],
-
-            # Tool outputs (environment/tool segments)
             df['seg_kind'].eq('environment') & df['in_content_span'],
         ],
         [
@@ -731,8 +719,9 @@ def label_olmo3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
 
     # ---- Cleanup helper columns ----
     drop_cols = [
-        'is_start', 'is_end', 'is_eos', 'has_nl', 'nl_cum', 'is_first_nl',
-        'before_header', 'is_header_token', 'is_close', 'before_end', 'in_body',
+        'is_start', 'is_end', 'is_eos', 'has_nl', 'is_pure_nl',
+        'nl_cum', 'is_first_nl', 'before_header', 'is_header_token',
+        'is_close', 'before_end', 'in_body',
         'is_fcalls_open', 'is_fcalls_close',
         'is_funcs_open', 'is_funcs_close',
         'fcalls_open_cum', 'fcalls_close_cum',
@@ -761,7 +750,7 @@ def label_content_roles(model_architecture, sample_df):
     """
     if model_architecture == 'gptoss':
         return label_gptoss_content_roles(sample_df)
-    elif model_architecture in ['qwen3moe', 'qwen3vlmoe']:
+    elif model_architecture == 'qwen3moe':
         return label_qwen3_content_roles(sample_df)
     elif model_architecture == 'glm4moe':
         return label_glm4_content_roles(sample_df)

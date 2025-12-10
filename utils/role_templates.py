@@ -21,7 +21,7 @@ def render_single_gptoss(role: str, content: str, *, tool_name = None) -> str:
         raise ValueError("Invalid role!")
     return f"<|start|>{header}{content}<|end|>"
 
-def render_single_qwen3moe(role: str, content: str) -> str:
+def render_single_qwen3(role: str, content: str) -> str:
     """
     Wrap arbitrary text as a single Qwen3Moe message.
     Notes:
@@ -39,7 +39,7 @@ def render_single_qwen3moe(role: str, content: str) -> str:
         return f"<|im_start|>assistant\n<think>\n{content}\n</think>\n<|im_end|>\n"
     elif role == 'assistant-final':
         # return f"<|im_start|>assistant\n{content}<|im_end|>\n"
-        return f"<|im_start|>assistant\n<think>\n</think>\n\n{content}<|im_end|>\n"
+        return f"<|im_start|>assistant\n<think>\n\n</think>\n\n{content}<|im_end|>\n"
     elif role == 'tool':
         # Tool output fed back as a user message block
         return f"<|im_start|>user\n<tool_response>\n{content}\n</tool_response><|im_end|>\n"
@@ -68,7 +68,6 @@ def render_single_olmo3(role: str, content: str) -> str:
     elif role == 'assistant-cot':
         return f"<|im_start|>assistant\n<think>{content}</think><|im_end|>\n"
     elif role == 'assistant-final':
-        # return f"<|im_start|>assistant\n{content}<|im_end|>\n"
         return f"<|im_start|>assistant\n<think></think>{content}<|im_end|>\n"
         # return f"<|im_start|>assistant\n{content}<|im_end|>\n" ## OR try this - no think at all (instruct variant)
     elif role == 'tool': # Tool output / environment feedback Olmo-3 uses the `environment` role for this.
@@ -76,8 +75,7 @@ def render_single_olmo3(role: str, content: str) -> str:
     else:
         raise ValueError("Invalid role!")
 
-
-def render_single_glm4moe(role: str, content: str) -> str:
+def render_single_glm4(role: str, content: str) -> str:
     """
     Render a single GLM-4 message segment.
 
@@ -91,7 +89,7 @@ def render_single_glm4moe(role: str, content: str) -> str:
     elif role == 'user':
         return f"<|user|>\n{content}\n"
     elif role == 'assistant-cot':
-        return f"<|assistant|>\n<think>\n{content}\n</think>\n"
+        return f"<|assistant|>\n<think>{content}</think>\n"
     elif role == 'assistant-final':
         return f"<|assistant|>\n<think></think>\n{content}\n"
     elif role == 'tool':
@@ -123,17 +121,40 @@ def render_single_message(model_architecture, role, content, tool_name = None) -
     """
     if model_architecture == 'gptoss':
         res = render_single_gptoss(role, content, tool_name = tool_name)
-    elif model_architecture in ['qwen3moe', 'qwen3vlmoe']:
-        res = render_single_qwen3moe(role, content)
+    elif model_architecture == 'qwen3moe':
+        res = render_single_qwen3(role, content)
     elif model_architecture == 'glm4moe':
-        res = render_single_glm4moe(role, content)
+        res = render_single_glm4(role, content)
     elif model_architecture == 'olmo3':
         res = render_single_olmo3(role, content)
-
     else:
         raise ValueError("Invalid model!")
 
     return res
+
+
+def render_mixed_cot(model_architecture, cot, assistant) -> str:
+    """
+    Renders a mixed cot + assistant message
+
+    Params:
+        @model_architecture: One of several suppored model types, includes.
+        @cot: The assistant-cot text
+        @assistant: The assistant-final text
+
+    Example:
+        render_mixed_cot('gptoss', 'The user says..', 'The user says')
+    """
+    if model_architecture == 'gptoss':
+        return f"<|start|>assistant<|channel|>analysis<|message|>{cot}<|end|><|start|>assistant<|channel|>final<|message|>{assistant}<|end|>"
+    elif model_architecture  == 'qwen3moe':
+        return f"<|im_start|>assistant\n<think>\n{cot}\n</think>\n\n{assistant}<|im_end|>\n"
+    elif model_architecture == 'glm4':
+        return f"<|assistant|>\n<think>{cot}</think>\n{assistant}\n"
+    elif model_architecture == 'olmo3':
+        return f"<|im_start|>assistant\n<think>{cot}</think>{assistant}<|im_end|>\n"
+    else:
+        raise ValueError("Invalid model!")
 
 def load_chat_template(parent_dir, model_architecture) -> str:
     """
