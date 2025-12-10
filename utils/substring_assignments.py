@@ -6,7 +6,7 @@ import numpy as np
 import bisect
 from itertools import accumulate
 
-def flag_message_types(sample_level_df: pd.DataFrame, base_messages: list[str],) -> pd.DataFrame:
+def flag_message_types(sample_level_df: pd.DataFrame, base_messages: list[str], allow_ambiguous: bool = False) -> pd.DataFrame:
     """
     Take a token-level df with columns for prompt_ix, token; identify whether each token is one of base_messages.
     
@@ -27,11 +27,12 @@ def flag_message_types(sample_level_df: pd.DataFrame, base_messages: list[str],)
             - If the base_message_type is "sure, here is " and the full string is "Sure here is dog", and the space is tokenized with " dog", 
               then " dog" will be included too.
             - Be careful to AVOID base_messages which are overlapping ("Sure, here is ", "Sure, here is a detailed answer:"): these means that 
-              matches can be ambiguous, which raises a ValueError.
+              matches can be ambiguous, which raises a ValueError unless allow_ambiguous=True.
 
     Params:
         @sample_level_df: A token-level dataframe with columns for `prompt_ix`, `token_ix` (ordering within prompt), `token` (string token)
         @base_messages: A list of base messages to match tokens to
+        @allow_ambiguous: If True, matches to the first base message when ambiguous
 
     Returns:
         The original sample_level_df, with and additional column `base_message_ix` equal to the index
@@ -91,12 +92,16 @@ def flag_message_types(sample_level_df: pd.DataFrame, base_messages: list[str],)
 
     for row_ix, s in enumerate(memberships):
         if len(s) > 1:
-            token = df.loc[row_ix, 'token']
-            matched = [base_messages[i] for i in s]
-            raise ValueError(
-                f"Ambiguous match at row {row_ix}, token {token!r}: "
-                f"matched {len(s)} base_messages: {matched}"
-            )
+            if allow_ambiguous:
+                # Assign to the first base_message by index (order in base_messages)
+                base_message_ix_col.append(min(s))
+            else:
+                token = df.loc[row_ix, 'token']
+                matched = [base_messages[i] for i in s]
+                raise ValueError(
+                    f"Ambiguous match at row {row_ix}, token {token!r}: "
+                    f"matched {len(s)} base_messages: {matched}"
+                )
         elif len(s) == 1:
             base_message_ix_col.append(next(iter(s)))
         else:
@@ -109,6 +114,7 @@ def flag_message_types(sample_level_df: pd.DataFrame, base_messages: list[str],)
     ]
 
     return df
+
 
 def flag_message_types_dep(sample_level_df, base_messages):
     """
