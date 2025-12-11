@@ -98,6 +98,21 @@ def render_single_glm4(role: str, content: str) -> str:
         return f"<|observation|>\n<tool_response>\n{content}\n</tool_response>"
     else:
         raise ValueError("Invalid role!")
+        
+def render_single_apriel(role, content):
+    """
+    Render for Apriel format
+    """
+    if role == 'system':
+        return f"<|begin_system|>\n{content}\n"
+    elif role == 'user':
+        return f"<|begin_user|>\n{content}\n"
+    elif role == 'assistant-cot':
+        return f"<|begin_assistant|>\nHere are my reasoning steps:\n{content}\n"
+    elif role == 'assistant-final':
+        return f"<|begin_assistant|>\n[BEGIN FINAL RESPONSE]\n{content}\n"
+    elif role == 'tool':
+        return f"<|begin_tool_result|>\n{content}\n"
 
 def render_single_message(model_architecture, role, content, tool_name = None) -> str:
     """
@@ -153,6 +168,9 @@ def render_mixed_cot(model_architecture, cot, assistant) -> str:
         return f"<|assistant|>\n<think>{cot}</think>\n{assistant}"
     elif model_architecture == 'olmo3':
         return f"<|im_start|>assistant\n<think>{cot}</think>{assistant}<|im_end|>\n"
+    elif model_architecture == 'apriel':
+        return f"<|begin_assistant|>\nHere are my reasoning steps:\n{cot}\n[BEGIN FINAL RESPONSE]\n{assistant}\n<|end|>\n"
+
     else:
         raise ValueError("Invalid model!")
 

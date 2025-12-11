@@ -434,7 +434,7 @@ def label_glm4_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     # Only treat as structural if the token is *pure* newline(s); if it's merged
     # with content (e.g. "\n{"), we keep it as content.
     df['is_pure_nl'] = df['token'].str.fullmatch(NL_PATTERN)
-    
+
     # NOTE: we NO LONGER treat newlines inside <think>...</think> as tags.
     # ws_after_think: structural gap newlines after </think> but before first visible token.
     df['ws_after_think'] = (
@@ -762,13 +762,323 @@ def label_olmo3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+def label_apriel_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Label tokens with Apriel-1.6-15B-Thinker roles, content-only and multi-message safe.
+
+    Assumptions:
+      - Special sentinels like:
+            <|begin_system|>, <|begin_user|>, <|begin_assistant|>,
+            <|begin_tool_result|>, <|begin_content|>, <|end|>,
+            <tool_calls>, </tool_calls>, [BEGIN FINAL RESPONSE],
+            <thinking>, </thinking>
+        each appear as single tokens in sample_df['token'].
+      - Reasoning template for the current assistant turn:
+            <|begin_assistant|>
+            Here are my reasoning steps:\\n   (prompt-inserted header, treated as structural)
+            ... chain-of-thought ...
+            [BEGIN FINAL RESPONSE]
+            ... final answer ...
+        Earlier assistant turns typically omit the reasoning and marker, acting as pure finals.
+
+    Input:
+        sample_df: columns
+            - prompt_ix : global conversation index
+            - token_ix  : position within that prompt
+            - token     : decoded token string (one token per row)
+
+    Output:
+        original df +:
+            - seg_id          : segment id within prompt
+            - in_content_span : bool, True for non-wrapper tokens inside a segment
+            - role            : one of
+                   {system, user, assistant-cot, assistant-final,
+                    assistant-commentary, tool}
+                   or None for non-content / structural tokens.
+    """
+
+    # Segment begin sentinels
+    BEGIN_SYSTEM  = '<|begin_system|>'
+    BEGIN_USER    = '<|begin_user|>'
+    BEGIN_ASSIST  = '<|begin_assistant|>'
+    BEGIN_TOOLRES = '<|begin_tool_result|>'
+    BEGIN_CONTENT = '<|begin_content|>'
+    END_TOKEN     = '<|end|>'
+
+    # Tool calls & thinking tags
+    TOOL_OPEN, TOOL_CLOSE = '<tool_calls>', '</tool_calls>'
+    THINK_OPEN, THINK_CLOSE = '<thinking>', '</thinking>'
+
+    # Final-answer marker
+    FINAL_MARK = '[BEGIN FINAL RESPONSE]'
+
+    # Fixed reasoning header string from the template
+    REASONING_HEADER = "Here are my reasoning steps:\n"
+
+    # Newline detection (for header splitting)
+    NL_PATTERN = r'[\nĊĉĈ]+'
+
+    df = sample_df.sort_values(['prompt_ix', 'token_ix']).copy()
+
+    # ---- Segment boundaries: begin_* tokens start new segments ----
+    df['is_seg_start'] = df['token'].isin(
+        [BEGIN_SYSTEM, BEGIN_USER, BEGIN_ASSIST, BEGIN_TOOLRES, BEGIN_CONTENT]
+    )
+    df['seg_id'] = df.groupby('prompt_ix', sort=False)['is_seg_start'].cumsum()
+
+    # ---- Segment kind ----
+    df['role_token'] = df['token'].where(df['is_seg_start'])
+    df['seg_role_token'] = (
+        df.groupby(['prompt_ix', 'seg_id'], sort=False)['role_token']
+          .transform('first')
+          .fillna('')
+    )
+
+    df['seg_kind'] = np.select(
+        [
+            df['seg_role_token'].eq(BEGIN_ASSIST),
+            df['seg_role_token'].eq(BEGIN_USER),
+            df['seg_role_token'].eq(BEGIN_SYSTEM),
+            df['seg_role_token'].eq(BEGIN_TOOLRES),
+            df['seg_role_token'].eq(BEGIN_CONTENT),
+        ],
+        ['assistant', 'user', 'system', 'tool_result', 'content'],
+        default=None,
+    )
+
+    # ---- Newlines & header detection (first newline after begin_* is structural) ----
+    by_seg = df.groupby(['prompt_ix', 'seg_id'], sort=False)
+    df['has_nl'] = df['token'].str.contains(NL_PATTERN, regex=True)
+    df['nl_cum'] = by_seg['has_nl'].cumsum()
+    df['is_first_nl'] = df['has_nl'] & df['nl_cum'].eq(1)
+    df['before_header'] = df['nl_cum'].eq(0)
+
+    df['is_header_token'] = (
+        (df['seg_id'] > 0)
+        & ~df['is_seg_start']
+        & (df['before_header'] | df['is_first_nl'])
+    )
+
+    # ---- Close sentinel (<|end|>) ----
+    df['is_close'] = df['token'].eq(END_TOKEN)
+    df['before_end'] = by_seg['is_close'].cumsum().eq(0)
+
+    # ---- Body tokens: inside a segment, past header, before <|end|> ----
+    df['in_body'] = (df['seg_id'] > 0) & ~df['is_header_token'] & df['before_end']
+
+    # ---- Tag markers ----
+    df['is_think_open'] = df['token'].eq(THINK_OPEN)
+    df['is_think_close'] = df['token'].eq(THINK_CLOSE)
+
+    df['is_tool_open'] = df['token'].eq(TOOL_OPEN)
+    df['is_tool_close'] = df['token'].eq(TOOL_CLOSE)
+
+    df['is_final_mark'] = df['token'].eq(FINAL_MARK)
+
+    # segment starts & ends are tags
+    df['is_begin_token'] = df['is_seg_start']
+    df['is_end_token'] = df['token'].eq(END_TOKEN)
+
+    # ---- Nested spans: <tool_calls>... and <thinking>... ----
+    by_seg = df.groupby(['prompt_ix', 'seg_id'], sort=False)
+    df['tool_open_cum'] = by_seg['is_tool_open'].cumsum()
+    df['tool_close_cum'] = by_seg['is_tool_close'].cumsum()
+    df['in_tool_calls'] = df['tool_open_cum'] > df['tool_close_cum']
+
+    df['think_open_cum'] = by_seg['is_think_open'].cumsum()
+    df['think_close_cum'] = by_seg['is_think_close'].cumsum()
+    df['in_thinking'] = df['think_open_cum'] > df['think_close_cum']
+
+    # ---- Base tag mask: wrappers, final marker, thinking tags ----
+    df['is_tag0'] = df[
+        [
+            'is_begin_token',
+            'is_end_token',
+            'is_think_open', 'is_think_close',
+            'is_tool_open', 'is_tool_close',
+            'is_final_mark',
+        ]
+    ].any(axis=1)
+
+    # ---- Identify the reasoning header "Here are my reasoning steps:\\n" ----
+    def _mark_reason_header(group: pd.DataFrame) -> pd.DataFrame:
+        # Only assistant segments can have this header
+        if group['seg_kind'].iloc[0] != 'assistant':
+            group['is_reason_header'] = False
+            return group
+
+        # Body tokens excluding the <|begin_assistant|> sentinel
+        body_mask = group['in_body'] & ~group['is_begin_token']
+        body_tokens = group.loc[body_mask, 'token'].tolist()
+        if not body_tokens:
+            group['is_reason_header'] = False
+            return group
+
+        body_text = ''.join(body_tokens)
+        if not body_text.startswith(REASONING_HEADER):
+            group['is_reason_header'] = False
+            return group
+
+        prefix_len = len(REASONING_HEADER)
+        lengths = np.fromiter((len(t) for t in body_tokens), dtype=int)
+        starts = np.empty_like(lengths)
+        if len(lengths) > 0:
+            starts[0] = 0
+            if len(lengths) > 1:
+                starts[1:] = lengths.cumsum()[:-1]
+
+        # Any token whose span intersects [0, prefix_len) is part of the header
+        header_mask = starts < prefix_len
+        group['is_reason_header'] = False
+        header_index = group.loc[body_mask].index[header_mask]
+        group.loc[header_index, 'is_reason_header'] = True
+        return group
+
+    df = (
+        df
+        .groupby(['prompt_ix', 'seg_id'], sort=False, group_keys=False)
+        .apply(_mark_reason_header)
+    )
+
+    df['is_reason_header'] = df['is_reason_header'].fillna(False)
+
+    # Rebuild by_seg after the apply
+    by_seg = df.groupby(['prompt_ix', 'seg_id'], sort=False)
+
+    # ---- Final marker position per segment ----
+    df['final_seen_cum'] = by_seg['is_final_mark'].cumsum()
+    df['before_final'] = df['final_seen_cum'].eq(0)
+    df['after_final'] = df['final_seen_cum'].gt(0)
+    df['seg_has_final'] = by_seg['is_final_mark'].transform('any')
+
+    # Does this segment have the reasoning header phrase?
+    df['seg_has_reason_header'] = by_seg['is_reason_header'].transform('any')
+
+    # ---- Final tag mask includes reasoning header ----
+    df['is_tag'] = df['is_tag0'] | df['is_reason_header']
+
+    # ---- Content span ----
+    df['in_content_span'] = df['in_body'] & ~df['is_tag']
+
+    # ---- Final role per token ----
+    is_assistant   = df['seg_kind'].eq('assistant')
+    is_user        = df['seg_kind'].eq('user')
+    is_system      = df['seg_kind'].eq('system')
+    is_toolres     = df['seg_kind'].eq('tool_result')
+    is_content_seg = df['seg_kind'].eq('content')
+
+    # Assistant CoT:
+    #  - anything in <thinking>...
+    #  - plus, for reasoning segments:
+    #       * segments with [BEGIN FINAL RESPONSE]:
+    #             non-tool_call tokens before final marker
+    #       * segments without final marker but with header:
+    #             non-tool_call tokens after header (partial CoT)
+    cot_mask = (
+        is_assistant
+        & df['in_content_span']
+        & (
+            df['in_thinking']
+            | (
+                df['seg_has_final']
+                & df['before_final']
+                & ~df['in_tool_calls']
+            )
+            | (
+                ~df['seg_has_final']
+                & df['seg_has_reason_header']
+                & ~df['in_tool_calls']
+            )
+        )
+    )
+
+    # Assistant commentary: tool call JSON inside <tool_calls>...</tool_calls>
+    commentary_mask = (
+        is_assistant
+        & df['in_content_span']
+        & df['in_tool_calls']
+    )
+
+    # Assistant final:
+    #  - segments with [BEGIN FINAL RESPONSE]: tokens after final marker
+    #  - segments without final marker and without reasoning header: pure final turns
+    final_mask = (
+        is_assistant
+        & df['in_content_span']
+        & ~df['in_thinking']
+        & ~df['in_tool_calls']
+        & (
+            (df['seg_has_final'] & df['after_final'])
+            | (~df['seg_has_final'] & ~df['seg_has_reason_header'])
+        )
+    )
+
+    # User, system, tool outputs
+    user_mask   = is_user & df['in_content_span']
+    system_mask = (is_system | is_content_seg) & df['in_content_span']
+    tool_mask   = is_toolres & df['in_content_span']
+
+    df['role'] = np.select(
+        [
+            cot_mask,
+            commentary_mask,
+            final_mask,
+            user_mask,
+            system_mask,
+            tool_mask,
+        ],
+        [
+            'assistant-cot',
+            'assistant-commentary',
+            'assistant-final',
+            'user',
+            'system',
+            'tool',
+        ],
+        default=None,
+    )
+
+    # ---- Cleanup helper columns ----
+    drop_cols = [
+        'is_seg_start', 'role_token', 'seg_role_token',
+        'has_nl', 'nl_cum', 'is_first_nl', 'before_header', 'is_header_token',
+        'is_close', 'before_end',
+        'is_think_open', 'is_think_close',
+        'is_tool_open', 'is_tool_close',
+        'is_final_mark',
+        'is_begin_token', 'is_end_token',
+        'tool_open_cum', 'tool_close_cum',
+        'think_open_cum', 'think_close_cum',
+        'is_tag0', 'is_reason_header',
+        'final_seen_cum', 'before_final', 'after_final',
+        'seg_has_final', 'seg_has_reason_header',
+    ]
+    df = df.drop(columns=drop_cols, errors='ignore')
+
+    return df.reset_index(drop=True)
+
+
 def label_content_roles(model_architecture, sample_df):
     """
     Takes a token-level df, labels each token with its role only within the content span. Makes no assumption about the number of messages in the sequence.
     
     Params: 
         @sample_df: A dataframe with the following columns: prompt_ix, token_ix, token.
-         Prompt_ix represents a global index of the sequence, equivalent to an index on (batch_ix, sequence_ix).
+            - prompt_ix: global index of the sequence, equivalent to an index on (batch_ix, sequence_ix).
+            - token_ix: position within the prompt
+            - token: decoded token string
+
+    Description:
+        The exact set of segment start tokens, wrappers, and structural whitespace patterns is **template-specific** and implemented inside each
+        `label_*_content_roles` function, but all share the same semantics. Text is considered content iff the token is considered semantic content (not a role indicator).
+        This excludes, per template:
+            - segment start/role sentinels (`<|begin_*|>`, `<|system|>`, etc.)
+            - explicit closing sentinels (`<|end|>`, `<|im_end|>`, EOS)
+            - structural wrappers (e.g. `<think>`, `</think>`, `<tool_call>`, `</tool_call>`, `<tool_response>`, `<tool_calls>`, `</tool_calls>`, `<functions>`, etc.)
+            - template-only control tokens (e.g. `/nothink`, `[BEGIN FINAL RESPONSE]`, reasoning headers we treat as tags)
+            - header tokens (typically the first newline and any role line immediately after a segment start)
+            - template-specific "pure structural whitespace" that are always attached with a tag.
+        - All other tokens inside a segment are considered content, including tokens that are a mixed combination of "inner content" and role tags.
 
     Returns:
         The original df with new columns:
@@ -784,5 +1094,7 @@ def label_content_roles(model_architecture, sample_df):
         return label_glm4_content_roles(sample_df)
     elif model_architecture == 'olmo3':
         return label_olmo3_content_roles(sample_df)
+    elif model_architecture == 'apriel':
+        return label_apriel_content_roles(sample_df)
     else:
         raise ValueError(f"Model prefix {model_architecture} not supported")
