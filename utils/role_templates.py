@@ -85,17 +85,17 @@ def render_single_glm4(role: str, content: str) -> str:
       - Tool OUTPUT is wrapped as an observation + <tool_response> block.
     """
     if role == 'system':
-        return f"<|system|>\n{content}\n"
+        return f"<|system|>\n{content}"
     elif role == 'user':
-        return f"<|user|>\n{content}\n"
+        return f"<|user|>\n{content}"
     elif role == 'assistant-cot':
         return f"<|assistant|>\n<think>{content}</think>\n"
     elif role == 'assistant-final':
-        return f"<|assistant|>\n<think></think>\n{content}\n"
+        return f"<|assistant|>\n<think></think>\n{content}"
     elif role == 'tool':
         # Tool OUTPUT (results). GLM-4.6 groups consecutive tool responses under <|observation|>.
         # For a single message helper we always include the prefix.
-        return f"<|observation|>\n<tool_response>\n{content}\n</tool_response>\n"
+        return f"<|observation|>\n<tool_response>\n{content}\n</tool_response>"
     else:
         raise ValueError("Invalid role!")
 
@@ -117,13 +117,13 @@ def render_single_message(model_architecture, role, content, tool_name = None) -
         @tool_name: The name of the tool to use (only for gpt-oss)
 
     Example:
-        render_single_message('gptoss', 'user', 'XXX', None)
+        render_single_message('gptoss', 'user', None)
     """
     if model_architecture == 'gptoss':
         res = render_single_gptoss(role, content, tool_name = tool_name)
     elif model_architecture == 'qwen3moe':
         res = render_single_qwen3(role, content)
-    elif model_architecture == 'glm4moe':
+    elif model_architecture in ['glm4vmoe','glm46v']:
         res = render_single_glm4(role, content)
     elif model_architecture == 'olmo3':
         res = render_single_olmo3(role, content)
@@ -149,8 +149,8 @@ def render_mixed_cot(model_architecture, cot, assistant) -> str:
         return f"<|start|>assistant<|channel|>analysis<|message|>{cot}<|end|><|start|>assistant<|channel|>final<|message|>{assistant}<|end|>"
     elif model_architecture  == 'qwen3moe':
         return f"<|im_start|>assistant\n<think>\n{cot}\n</think>\n\n{assistant}<|im_end|>\n"
-    elif model_architecture == 'glm4':
-        return f"<|assistant|>\n<think>{cot}</think>\n{assistant}\n"
+    elif model_architecture in ['glm4vmoe','glm46v']:
+        return f"<|assistant|>\n<think>{cot}</think>\n{assistant}"
     elif model_architecture == 'olmo3':
         return f"<|im_start|>assistant\n<think>{cot}</think>{assistant}<|im_end|>\n"
     else:
@@ -167,13 +167,27 @@ def load_chat_template(parent_dir, model_architecture) -> str:
     Notes:
         - For Qwen3MoE, this:
             (1) prevents old <think></think> tags from being stripped.
-        - For GLM4MoE, this does not; it's just the standard chat template.
+        - For GLM4, this does not; it's just the standard chat template.
+            (1) removes the [gMASK]<sop> prefix (add it back yourself)
+            (2) 
         - For GPT-OSS, this:
             (1) removes the default system prompt;
             (2) has {"role": "system", "content", "..."} propagate to the system prompt instead of the developer prompt;
             (3) supports passing <think> directly (instead of a separate thinking key as in https://huggingface.co/spaces/huggingfacejs/chat-template-playground?modelId=openai%2Fgpt-oss-20b&example=hello-world).
     """
-    with open(f'{parent_dir}/{model_architecture}.j2', 'r') as f:
+    if model_architecture == 'gptoss':
+        instruct_format = 'gptoss'
+    elif model_architecture == 'qwen3moe':
+        instruct_format = 'qwen3'
+    elif model_architecture in ['glm4vmoe', 'glm46v']:
+        instruct_format = 'glm4'
+    elif model_architecture == 'olmo3':
+        instruct_format = 'olmo3'
+    else:
+        raise ValueError(f"Model prefix {model_architecture} not supported")
+
+    with open(f'{parent_dir}/{instruct_format}.j2', 'r') as f:
         chat_template_str = f.read()
 
     return chat_template_str
+    

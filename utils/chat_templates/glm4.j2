@@ -1,4 +1,3 @@
-{{- "[gMASK]<sop>" -}}
 {%- if tools -%}
 	{{- "<|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n" -}}
 	{%- for tool in tools -%}
@@ -43,7 +42,7 @@
 			{%- set reasoning_content = content.split("</think>")[0].rstrip("\n").split("<think>")[-1].lstrip("\n") -%}
 			{%- set content = content.split("</think>")[-1].lstrip("\n") -%}
 		{%- endif -%}
-		{%- if loop.index0 > ns.last_user_index and reasoning_content -%}
+		{%- if reasoning_content -%}
 			{{- "\n<think>" + reasoning_content.strip() + "</think>" -}}
 		{%- else -%}
 			{{- "\n<think></think>" -}}

@@ -18,7 +18,7 @@ def run_gptoss_return_topk(model, input_ids, attention_mask, return_hidden_state
         @return_hidden_states: Boolean; whether to return hidden_states themselves.
 
     Returns:
-        dict with keys (identical to your Qwen helper):
+        dict with keys:
         - `logits`: (B, N, V) LM outputs
         - `all_topk_experts`: List (len = # MoE layers) of (BN, topk) expert IDs tensors
         - `all_topk_weights`: List (len = # MoE layers) of (BN, topk) expert weight tensors

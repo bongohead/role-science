@@ -279,13 +279,15 @@ def label_qwen3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
 def label_glm4_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     """
     Label tokens for GLM-4.5 / GLM-4.6 hybrid reasoning models, treating structural
-    newlines the same way we do for Qwen3:
+    newlines similarly to Qwen3 but preserving ALL content inside <think>...</think>:
 
       * Newline after <|role|> sentinel (up to first newline) = header, non-content.
-      * Newlines inside <think>...</think> = non-content.
       * Newlines in the immediate gap after </think> up to the first visible token
         in that 'post-think' run = non-content.
-      * All other newlines are content.
+      * Newlines immediately around <tool_response>...</tool_response> wrappers can
+        be treated as structural (non-content).
+      * Everything between <think> and </think> (except the tags themselves) is
+        content and should be labeled assistant-cot.
 
     Assumes the official GLM-4.5/4.6 chat template, with single-token sentinels.
 
@@ -319,7 +321,7 @@ def label_glm4_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     ARGV_OPEN, ARGV_CLOSE     = '<arg_value>', '</arg_value>'
     NOTHINK                   = '/nothink'
 
-    # Newline detection (same pattern you used for Qwen)
+    # Newline detection
     NL_PATTERN = r'[\nĊĉĈ]+'
 
     df = sample_df.sort_values(['prompt_ix', 'token_ix']).copy()
@@ -349,7 +351,7 @@ def label_glm4_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         default=None,
     )
 
-    # ---- Newline & "header" detection (Qwen-style) ----
+    # ---- Newline & "header" detection ----
     df['has_nl'] = df['token'].str.contains(NL_PATTERN, regex=True)
 
     by_seg = df.groupby(['prompt_ix', 'seg_id'], sort=False)
@@ -359,8 +361,7 @@ def label_glm4_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     df['before_header'] = df['nl_cum'].eq(0)
 
     # Header tokens: everything after the role sentinel up to (and including) the
-    # first newline in that segment. For GLM this usually captures the single
-    # '\n' right after <|role|>.
+    # first newline in that segment (usually the single '\n' right after <|role|>).
     df['is_header_token'] = (
         (df['seg_id'] > 0)
         & ~df['is_seg_start']
@@ -414,8 +415,7 @@ def label_glm4_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         ]
     ].any(axis=1)
 
-    # ---- Structural whitespace (Qwen-style) ----
-    # 1) Newlines inside <think>...</think>
+    # ---- Structural whitespace around </think> (gap before visible answer) ----
     df['post_think_run'] = by_seg['is_think_close'].cumsum()
     df['in_post_think'] = (
         (df['post_think_run'] > 0)
@@ -429,10 +429,36 @@ def label_glm4_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
           .gt(0)
     )
 
-    df['ws_in_think'] = df['in_think'] & df['has_nl']
-    df['ws_after_think'] = df['in_post_think'] & df['has_nl'] & ~df['seen_visible']
 
-    df['is_tag'] = df['is_tag0'] | df['ws_in_think'] | df['ws_after_think']
+    # ---- Structural newlines around <tool_response> ----
+    # Only treat as structural if the token is *pure* newline(s); if it's merged
+    # with content (e.g. "\n{"), we keep it as content.
+    df['is_pure_nl'] = df['token'].str.fullmatch(NL_PATTERN)
+    
+    # NOTE: we NO LONGER treat newlines inside <think>...</think> as tags.
+    # ws_after_think: structural gap newlines after </think> but before first visible token.
+    df['ws_after_think'] = (
+        df['in_post_think']
+        & df['is_pure_nl']   # <-- only pure newline tokens are structural
+        & ~df['seen_visible']
+    )
+
+    df['prev_token'] = df.groupby('prompt_ix')['token'].shift(1)
+    df['next_token'] = df.groupby('prompt_ix')['token'].shift(-1)
+
+    df['ws_after_tresp_open'] = df['is_pure_nl'] & df['prev_token'].eq(TRESP_OPEN)
+    df['ws_before_tresp_close'] = df['is_pure_nl'] & df['next_token'].eq(TRESP_CLOSE)
+    df['ws_after_tresp_close'] = df['is_pure_nl'] & df['prev_token'].eq(TRESP_CLOSE)
+
+    df['ws_tool_struct'] = (
+        df['ws_after_tresp_open']
+        | df['ws_before_tresp_close']
+        | df['ws_after_tresp_close']
+    )
+
+    # Final tag mask includes structural whitespace,
+    # BUT *not* newlines inside <think>...</think>.
+    df['is_tag'] = df['is_tag0'] | df['ws_after_think'] | df['ws_tool_struct']
 
     # ---- Content span ----
     df['in_content_span'] = df['in_body'] & ~df['is_tag']
@@ -440,7 +466,7 @@ def label_glm4_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     # ---- Final role per token ----
     df['role'] = np.select(
         [
-            # Assistant reasoning
+            # Assistant reasoning (CoT): any content token inside <think>...</think>
             df['seg_kind'].eq('assistant') & df['in_content_span'] & df['in_think'],
 
             # Assistant tool call (function name + arg_key/arg_value/JSON)
@@ -484,7 +510,9 @@ def label_glm4_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         'tcall_open_cum', 'tcall_close_cum',
         'in_body', 'is_prefix', 'is_role_sentinel', 'is_tag0',
         'post_think_run', 'in_post_think', 'non_ws_visible', 'seen_visible',
-        'ws_in_think', 'ws_after_think',
+        'ws_after_think',
+        'is_pure_nl', 'prev_token', 'next_token',
+        'ws_after_tresp_open', 'ws_before_tresp_close', 'ws_after_tresp_close', 'ws_tool_struct',
     ]
     df = df.drop(columns=drop_cols, errors='ignore')
 
@@ -752,7 +780,7 @@ def label_content_roles(model_architecture, sample_df):
         return label_gptoss_content_roles(sample_df)
     elif model_architecture == 'qwen3moe':
         return label_qwen3_content_roles(sample_df)
-    elif model_architecture == 'glm4moe':
+    elif model_architecture in ['glm4vmoe', 'glm46v']:
         return label_glm4_content_roles(sample_df)
     elif model_architecture == 'olmo3':
         return label_olmo3_content_roles(sample_df)
