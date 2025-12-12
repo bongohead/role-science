@@ -31,13 +31,6 @@
 {#  ----------------------------------------------------------------------  #}
 {#  Start system block if first message is not system                       #}
 {#  ----------------------------------------------------------------------  #}
-{%- if messages and messages[0]["role"] != "system" -%}
-	{%- if tools is not none and tools -%}
-		{{- bos_token + "<|begin_system|>\n" + reasoning_prompt + "\n" + available_tool_string + "\n" -}}
-	{%- else -%}
-		{{- bos_token + "<|begin_system|>\n" + reasoning_prompt + "\n" -}}
-	{%- endif -%}
-{%- endif -%}
 {#  ----------------------------------------------------------------------  #}
 {#  Iterate through messages                                              #}
 {#  ----------------------------------------------------------------------  #}

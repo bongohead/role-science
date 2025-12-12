@@ -274,7 +274,7 @@ def label_qwen3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         errors='ignore'
     )
 
-    return df.reset_index(drop=True)
+    return df.reset_index(drop = True)
 
 def label_glm4_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -1061,7 +1061,8 @@ def label_apriel_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
 def label_content_roles(model_architecture, sample_df):
     """
     Takes a token-level df, labels each token with its role only within the content span. Makes no assumption about the number of messages in the sequence.
-    
+    The input is a token-level dataframe spanning multiple prompts (conversations). Each prompt is identified by prompt_ix and contains a flat serialized token stream (including template tags, role sentinels, wrappers, and semantic content).
+
     Params: 
         @sample_df: A dataframe with the following columns: prompt_ix, token_ix, token.
             - prompt_ix: global index of the sequence, equivalent to an index on (batch_ix, sequence_ix).
@@ -1096,5 +1097,7 @@ def label_content_roles(model_architecture, sample_df):
         return label_olmo3_content_roles(sample_df)
     elif model_architecture == 'apriel':
         return label_apriel_content_roles(sample_df)
+    elif model_architecture == 'devstral2':
+        return ValueError('Not yet supported')
     else:
         raise ValueError(f"Model prefix {model_architecture} not supported")

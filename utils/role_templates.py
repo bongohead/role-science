@@ -108,11 +108,11 @@ def render_single_apriel(role, content):
     elif role == 'user':
         return f"<|begin_user|>\n{content}\n"
     elif role == 'assistant-cot':
-        return f"<|begin_assistant|>\nHere are my reasoning steps:\n{content}\n"
+        return f"<|begin_assistant|>\nHere are my reasoning steps:\n{content}\n<|end|>"
     elif role == 'assistant-final':
-        return f"<|begin_assistant|>\n[BEGIN FINAL RESPONSE]\n{content}\n"
+        return f"<|begin_assistant|>\n[BEGIN FINAL RESPONSE]\n{content}\n<|end|>"
     elif role == 'tool':
-        return f"<|begin_tool_result|>\n{content}\n"
+        return f"<|begin_tool_result|>\n{content}\n\n\n"
 
 def render_single_message(model_architecture, role, content, tool_name = None) -> str:
     """
@@ -142,6 +142,8 @@ def render_single_message(model_architecture, role, content, tool_name = None) -
         res = render_single_glm4(role, content)
     elif model_architecture == 'olmo3':
         res = render_single_olmo3(role, content)
+    elif model_architecture == 'apriel':
+        res = render_single_apriel(role, content)
     else:
         raise ValueError("Invalid model!")
 
