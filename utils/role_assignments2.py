@@ -59,29 +59,33 @@ def label_gptoss_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         toks = tok_series.tolist()
         if not toks:
             return None
+
         toks_lc = [t.lower() for t in toks]
-        first = toks_lc[0]
+        header = "".join(toks_lc)
+        header_ns = header.replace(" ", "")  # defensive, in case any tokens contain spaces
 
         # Tool output: functions.<tool_name> ...
-        if first.startswith("functions."):
+        if header_ns.startswith("functions."):
             return "tool"
 
         # Tool call: assistant ... to=functions.<tool> ...
-        if first.startswith("assistant") and any(("to=functions" in t) for t in toks_lc):
+        if header_ns.startswith("assistant") and "to=functions" in header_ns:
             return "tool_call"
 
-        # Assistant channels (no fallback if channel missing)
-        if first.startswith("assistant") and _has_channel(toks_lc, "analysis"):
+        # Assistant channels (no fallback)
+        if header_ns.startswith("assistant") and "<|channel|>analysis" in header_ns:
             return "cot"
-        if first.startswith("assistant") and (_has_channel(toks_lc, "final") or _has_channel(toks_lc, "commentary")):
+        if header_ns.startswith("assistant") and (
+            "<|channel|>final" in header_ns or "<|channel|>commentary" in header_ns
+        ):
             return "assistant"
 
         # System / user / developer
-        if first == "user":
+        if header_ns.startswith("user"):
             return "user"
-        if first == "system":
+        if header_ns.startswith("system"):
             return "system"
-        if first == "developer":
+        if header_ns.startswith("developer"):
             return "developer"
 
         return None

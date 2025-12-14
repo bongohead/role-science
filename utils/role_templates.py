@@ -10,9 +10,9 @@ def render_single_gptoss(role: str, content: str, *, tool_name = None) -> str:
     """
     if role in ['system', 'developer', 'user']:
         header = f"{role}<|message|>"
-    elif role == 'assistant-cot':
+    elif role == 'cot':
         header = f"assistant<|channel|>analysis<|message|>"
-    elif role == 'assistant-final':
+    elif role == 'assistant':
         header = f"assistant<|channel|>final<|message|>"
     elif role == 'tool':
         tool_name = tool_name or ''
@@ -107,9 +107,9 @@ def render_single_apriel(role, content):
         return f"<|begin_system|>\n{content}\n"
     elif role == 'user':
         return f"<|begin_user|>\n{content}\n"
-    elif role == 'assistant-cot':
+    elif role == 'cot':
         return f"<|begin_assistant|>\nHere are my reasoning steps:\n{content}\n<|end|>"
-    elif role == 'assistant-final':
+    elif role == 'assistant':
         return f"<|begin_assistant|>\n[BEGIN FINAL RESPONSE]\n{content}\n<|end|>"
     elif role == 'tool':
         return f"<|begin_tool_result|>\n{content}\n\n\n"
@@ -203,6 +203,8 @@ def load_chat_template(parent_dir, model_architecture) -> str:
         instruct_format = 'glm4'
     elif model_architecture == 'olmo3':
         instruct_format = 'olmo3'
+    elif model_architecture == 'apriel':
+        instruct_format = 'apriel'
     else:
         raise ValueError(f"Model prefix {model_architecture} not supported")
 
