@@ -141,8 +141,9 @@ def label_apriel_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
             * <tool_calls>...</tool_calls> content => tool_call (wrappers are structural).
             * [BEGIN FINAL RESPONSE] splits cot (before) vs assistant (after); if absent, assume cot.
             * The injected prefix "Here are my reasoning steps:\\n" (if present) is structural.
-        - Newline-only runs immediately before any begin sentinel token-span or <|end|> token-span are structural.
-        - <tool_calls> and [BEGIN FINAL RESPONSE] are structural only in assistant segments
+            * Newline-only tokens immediately before/after structural markers (reasoning header, final marker,
+              tool/thinking wrappers, <|end|>) are structural (non-content), unless merged with other text.
+        - <tool_calls> and [BEGIN FINAL RESPONSE] are treated as structural only in assistant segments
           (they can appear as literal text in the system prompt).
     """
     required = {"prompt_ix", "token_ix", "token"}
@@ -150,7 +151,7 @@ def label_apriel_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     if missing:
         raise ValueError(f"sample_df missing required columns: {sorted(missing)}")
 
-    # Core strings we detect in the concatenated token stream
+    # ----- Literals to locate in the concatenated token stream -----
     BEGIN_PATTERNS = {
         "system": "<|begin_system|>",
         "user": "<|begin_user|>",
@@ -165,14 +166,19 @@ def label_apriel_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     FINAL_MARK = "[BEGIN FINAL RESPONSE]"
 
     REASONING_HEADER = "Here are my reasoning steps:\n"
-    NL_ONLY_RE = re.compile(r"^[\nĊĉĈ]+$")   # newline-only tokens (for boundary-run rule A)
+
+    # Newline-only tokens (covers real '\n' and common tokenizer glyphs)
+    NL_ONLY_RE = re.compile(r"^[\nĊĉĈ]+$")
 
     def _norm_nl(s: str) -> str:
         # Normalize common newline glyphs to '\n'
-        return (s.replace("Ċ", "\n").replace("ĉ", "\n").replace("Ĉ", "\n"))
+        return s.replace("Ċ", "\n").replace("ĉ", "\n").replace("Ĉ", "\n")
 
     def _find_token_spans(text: str, starts: np.ndarray, ends: np.ndarray, literal: str):
-        """Return list of (tok_start, tok_end, char_start, char_end) spans for a literal substring."""
+        """
+        Return list of (tok_start, tok_end, char_start, char_end) spans for a literal substring.
+        Works even if the literal is split across many tokens.
+        """
         spans = []
         for m in re.finditer(re.escape(literal), text):
             cs, ce = m.start(), m.end()
@@ -197,12 +203,11 @@ def label_apriel_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         ends = starts + lens
         text = "".join(toks)
 
-        # --- Find begin spans and end spans (robust to multi-token tags) ---
+        # --- Find begin spans and end spans ---
         begin_spans = []
         for kind, pat in BEGIN_PATTERNS.items():
             for tok_s, tok_e, cs, _ in _find_token_spans(text, starts, ends, pat):
                 begin_spans.append((tok_s, tok_e, kind, cs))
-        # Order by token start, then char start (stable), then longer span first
         begin_spans.sort(key=lambda x: (x[0], x[3], -(x[1] - x[0])))
 
         end_spans = _find_token_spans(text, starts, ends, END_PATTERN)
@@ -250,21 +255,19 @@ def label_apriel_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         for s, e, _, _ in final_spans:
             final_tok[s:e + 1] = True
 
-        # --- Scan to assign container kind + header tokens (fixes your bug) ---
-        container = np.array([None] * n, dtype=object)   # system/user/assistant/tool/content/None
+        # --- Scan to assign container kind + header tokens ---
+        container = np.array([None] * n, dtype=object)  # system/user/assistant/tool/content/None
         msg_id = np.zeros(n, dtype=int)
-
         is_header_tok = np.zeros(n, dtype=bool)
 
         current_kind = None
         current_msg = 0
 
-        header_phase = "done"     # 'in_begin', 'header', 'done'
+        header_phase = "done"  # 'in_begin', 'header', 'done'
         begin_end_idx = None
         pending_close_at = None
 
         for i in range(n):
-            # Begin new message container
             if i in begin_events:
                 begin_end_idx, current_kind = begin_events[i]
                 current_msg += 1
@@ -274,23 +277,17 @@ def label_apriel_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
             msg_id[i] = current_msg
             container[i] = current_kind
 
-            # Header handling:
-            # We *only* start header parsing after the begin-tag span ends,
-            # and we end header at the first token that contains any newline char.
             if current_kind is not None:
                 tok_norm = _norm_nl(toks[i])
 
+                # Header = after begin tag span ends, up to first token containing '\n'
                 if header_phase == "in_begin":
                     if begin_end_idx is not None and i == begin_end_idx:
-                        # If newline is already in the end token of the begin tag (e.g. '>\n'),
-                        # header is complete immediately; otherwise start marking header tokens next.
                         if "\n" in tok_norm:
                             header_phase = "done"
                         else:
                             header_phase = "header"
-
                 elif header_phase == "header":
-                    # Tokens between begin-tag end and first newline are structural header
                     is_header_tok[i] = True
                     if "\n" in tok_norm:
                         header_phase = "done"
@@ -298,7 +295,6 @@ def label_apriel_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
                 # Close assistant at <|end|> (after its span ends)
                 if current_kind == "assistant" and i in end_events:
                     pending_close_at = end_events[i]
-
                 if pending_close_at is not None and i == pending_close_at:
                     current_kind = None
                     header_phase = "done"
@@ -312,9 +308,10 @@ def label_apriel_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         in_segment = container != None
         in_body = in_segment & ~is_begin_tok & ~is_end_tok & ~is_header_tok
 
-        # --- Boundary newline runs (A): newline-only tokens immediately before begin/end spans ---
+        # --- Newline-only detection ---
         is_nl_only = np.fromiter((NL_ONLY_RE.fullmatch(t) is not None for t in toks), dtype=bool, count=n)
 
+        # next / prev non-newline-only token indices (within prompt)
         next_non_nl = np.full(n, -1, dtype=int)
         nxt = -1
         for i in range(n - 1, -1, -1):
@@ -322,6 +319,14 @@ def label_apriel_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
                 nxt = i
             next_non_nl[i] = nxt
 
+        prev_non_nl = np.full(n, -1, dtype=int)
+        prv = -1
+        for i in range(n):
+            if not is_nl_only[i]:
+                prv = i
+            prev_non_nl[i] = prv
+
+        # --- Boundary newline runs: newline-only tokens immediately before begin/end token-spans ---
         is_boundary_nl = np.zeros(n, dtype=bool)
         for i in range(n):
             if is_nl_only[i]:
@@ -344,7 +349,6 @@ def label_apriel_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         after_final = np.zeros(n, dtype=bool)
         seg_has_final = np.zeros(n, dtype=bool)
 
-        # helper to filter spans to a given assistant msg_id range
         def _spans_in_msg(spans, msg):
             out = []
             for s, e, _, _ in spans:
@@ -379,7 +383,7 @@ def label_apriel_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
                 if i in open_after:
                     depth += open_after[i]
 
-            # thinking depth (same semantics)
+            # thinking depth
             open_sp = _spans_in_msg(think_open_spans, m)
             close_sp = _spans_in_msg(think_close_spans, m)
 
@@ -421,17 +425,48 @@ def label_apriel_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
 
             prefix_len = len(REASONING_HEADER)
             lens_local = np.fromiter((len(t) for t in toks_norm), dtype=int, count=len(toks_norm))
-            starts_local = np.zeros(len(lens_local), dtype=int)
-            if len(lens_local) > 1:
+            starts_local = np.zeros(len(toks_norm), dtype=int)
+            if len(toks_norm) > 1:
                 starts_local[1:] = np.cumsum(lens_local)[:-1]
 
+            # Mark any token whose start is within the prefix window
             for flag, ti in zip(starts_local < prefix_len, idxs):
                 if flag:
                     is_reason_header[ti] = True
                 else:
                     break
 
+        # ---------------------------------------------------------------------
+        # NEW: assistant-only structural whitespace adjacency
+        # - newline-only tokens immediately BEFORE or AFTER:
+        #     * reasoning header prefix
+        #     * final marker
+        #     * tool/thinking wrappers
+        #     * <|end|>
+        #   are structural (non-content).
+        # ---------------------------------------------------------------------
+        is_struct_anchor_asst = (
+            is_final_mark | is_tool_open | is_tool_close | is_think_open | is_think_close | is_end_tok | is_reason_header
+        )
+
+        for i in range(n):
+            if not (asst[i] and is_nl_only[i]):
+                continue
+
+            # Before-anchor: next non-nl token is an anchor
+            j = next_non_nl[i]
+            if j != -1 and is_struct_anchor_asst[j]:
+                is_boundary_nl[i] = True
+                continue
+
+            # After-anchor: previous non-nl token is an anchor
+            k = prev_non_nl[i]
+            if k != -1 and is_struct_anchor_asst[k]:
+                is_boundary_nl[i] = True
+                continue
+
         # --- Tag mask and content mask ---
+        # Note: tool/final/think wrappers are structural only in assistant segments.
         is_tag = (
             is_begin_tok
             | is_end_tok
@@ -456,7 +491,7 @@ def label_apriel_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         role[remaining & in_thinking] = "cot"
 
         non_think = remaining & ~in_thinking
-        # marker present => split, else all cot
+        # marker present => split; else all cot
         role[non_think & seg_has_final & ~after_final] = "cot"
         role[non_think & seg_has_final & after_final] = "assistant"
         role[non_think & ~seg_has_final] = "cot"
@@ -484,7 +519,6 @@ def label_apriel_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
 
         g["is_content"] = is_content.astype(bool)
         g["role"] = role
-
         g["seg_ix"] = pd.Series(seg_ix, dtype="Int64")
         g["token_in_seg_ix"] = pd.Series(token_in_seg_ix, dtype="Int64")
         return g
@@ -498,10 +532,6 @@ def label_apriel_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         .reset_index(drop=True)
     )
     return out
-
-
-
-
 
 def label_content_roles(model_architecture, sample_df):
     """
@@ -535,7 +565,6 @@ def label_content_roles(model_architecture, sample_df):
     dispatch = {
         "gptoss": label_gptoss_content_roles,
         # "qwen3moe": label_qwen3_content_roles,
-        # "glm4vmoe": label_glm4_content_roles,
         # "glm46v": label_glm4_content_roles,
         # "olmo3": label_olmo3_content_roles,
         "apriel": label_apriel_content_roles,
