@@ -11,21 +11,16 @@ def label_gptoss_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
 
     Returns:
         - role: one of {system, developer, user, assistant, cot, tool_call, tool} or None
-        - is_content: bool (True iff token is semantic content inside a message span)
-        - seg_ix: int or None (contiguous runs of labeled content tokens with same role, per prompt)
-        - token_in_seg_ix: int or None (0-based index within seg_ix)
+        - is_content: bool
+        - seg_ix: int or None
+        - token_in_seg_ix: int or None
     """
     required = {"prompt_ix", "token_ix", "token"}
     missing = required - set(sample_df.columns)
     if missing:
         raise ValueError(f"sample_df missing required columns: {sorted(missing)}")
 
-    d = (
-        sample_df
-        .sort_values(["prompt_ix", "token_ix"])
-        .reset_index(drop=True)
-        .copy()
-    )
+    d = (sample_df.sort_values(["prompt_ix", "token_ix"]).reset_index(drop = True).copy())
 
     # ---- Message segmentation + content-span detection (literal token matching) ----
     d["msg_seg_id"] = d.groupby("prompt_ix")["token"].transform(lambda s: (s == "<|start|>").cumsum())
@@ -116,10 +111,7 @@ def label_gptoss_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
 
     # ---- Final cleanup / ordering ----
     out = d.drop(
-        columns=[
-            "msg_seg_id", "is_message", "is_close", "after_msg", "before_end",
-            "is_header_tok", "segment_role",
-        ],
+        columns=["msg_seg_id", "is_message", "is_close", "after_msg", "before_end", "is_header_tok", "segment_role",],
         errors="ignore",
     )
 
@@ -533,6 +525,317 @@ def label_apriel_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     )
     return out
 
+def label_olmo3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Label OLMo3-7B (Think + Instruct) token streams with content-only roles.
+
+        Description:
+        - ChatML framing: <|im_start|>role\\n ... (<|im_end|> or <|endoftext|>).
+        - <functions>...</functions> and <function_calls>...</function_calls> are single tokens.
+        - <think> / </think> are NOT single tokens; we detect them by substring scanning over the
+          concatenated assistant segment text. A dangling "<think>" (no close) marks cot until
+          the segment ends (supports olmo3-7b-think generation prompt).
+        - Pure newline tokens immediately before <functions> in user/system segments and pure newline
+          tokens immediately after </think> (until first non-newline token) are treated as structural
+          (non-content). Newlines inside think content are preserved as cot content.
+
+    Returns:
+        - role: one of {system, user, assistant, cot, tool_call, tool} or None
+        - is_content: bool
+        - seg_ix: int or None
+        - token_in_seg_ix: int or None
+    """
+    required = {"prompt_ix", "token_ix", "token"}
+    missing = required - set(sample_df.columns)
+    if missing:
+        raise ValueError(f"sample_df missing required columns: {sorted(missing)}")
+
+    # ---- Core ChatML tokens ----
+    IM_START = "<|im_start|>"
+    IM_END = "<|im_end|>"
+    EOS = "<|endoftext|>"
+
+    # ---- Single-token wrappers (confirmed) ----
+    OPEN_FUNCS, CLOSE_FUNCS = "<functions>", "</functions>"
+    OPEN_FCALLS, CLOSE_FCALLS = "<function_calls>", "</function_calls>"
+
+    # Think tags are NOT single tokens; we will scan for these substrings.
+    THINK_OPEN_STR = "<think>"
+    THINK_CLOSE_STR = "</think>"
+
+    # Newline-only token detector (covers common newline glyphs too)
+    NL_ONLY_RE = re.compile(r"^[\nĊĉĈ]+$")
+
+    # For header parsing, normalize common newline glyphs to '\n'
+    def _norm_nl_series(s: pd.Series) -> pd.Series:
+        return (
+            s.astype(str)
+             .str.replace("Ċ", "\n", regex=False)
+             .str.replace("ĉ", "\n", regex=False)
+             .str.replace("Ĉ", "\n", regex=False)
+        )
+
+    df = (
+        sample_df
+        .sort_values(["prompt_ix", "token_ix"])
+        .reset_index(drop=True)
+        .copy()
+    )
+
+    token_norm = _norm_nl_series(df["token"])
+
+    # ---- Segment by <|im_start|> ----
+    df["seg_id"] = df.groupby("prompt_ix", sort=False)["token"].transform(
+        lambda s: (s == IM_START).cumsum()
+    )
+
+    df["is_start"] = df["token"].eq(IM_START)
+    df["is_end"] = df["token"].eq(IM_END)
+    df["is_eos"] = df["token"].eq(EOS)
+
+    # newline flags
+    df["has_nl"] = token_norm.str.contains(r"[\n]+", regex=True) | df["token"].astype(str).str.contains(r"[ĊĉĈ]+", regex=True)
+    df["is_pure_nl"] = df["token"].astype(str).str.fullmatch(NL_ONLY_RE, na=False)
+
+    by_seg = df.groupby(["prompt_ix", "seg_id"], sort=False)
+
+    # ---- Header/body split (tokens between <|im_start|> and first newline char are structural) ----
+    df["nl_cum"] = by_seg["has_nl"].cumsum()
+    df["is_first_nl"] = df["has_nl"] & df["nl_cum"].eq(1)
+    df["before_header"] = df["nl_cum"].eq(0)
+
+    df["is_header_token"] = (
+        (df["seg_id"] > 0)
+        & ~df["is_start"]
+        & (df["before_header"] | df["is_first_nl"])
+    )
+
+    # ---- Close sentinel: <|im_end|> OR EOS ----
+    df["is_close"] = df["is_end"] | df["is_eos"]
+    df["before_end"] = by_seg["is_close"].cumsum().eq(0)
+
+    # Body tokens = inside a message, after header, before close sentinel
+    df["in_body"] = (df["seg_id"] > 0) & ~df["is_header_token"] & df["before_end"]
+
+    # ---- Reconstruct header role string per segment ----
+    # Grab tokens up to the first newline (split token that contains newline if needed).
+    df["header_piece"] = np.select(
+        [
+            (df["seg_id"] > 0) & ~df["is_start"] & df["before_header"] & ~df["has_nl"],
+            (df["seg_id"] > 0) & ~df["is_start"] & df["is_first_nl"],
+        ],
+        [
+            df["token"].astype(str),
+            token_norm.str.split("\n", n=1, regex=False).str[0],
+        ],
+        default=None,
+    )
+
+    # Concatenate header pieces per segment
+    header_line = (
+        df["header_piece"]
+        .fillna("")
+        .groupby([df["prompt_ix"], df["seg_id"]], sort=False)
+        .transform("sum")
+        .fillna("")
+        .str.strip()
+        .str.lower()
+    )
+    df = df.drop(columns=["header_piece"])
+    df["header_line"] = header_line
+
+    # Coarse segment kind
+    df["seg_kind"] = np.select(
+        [
+            df["header_line"].str.startswith("assistant"),
+            df["header_line"].str.startswith("user"),
+            df["header_line"].str.startswith("system"),
+            df["header_line"].str.startswith("environment"),
+            df["header_line"].str.startswith("tool"),
+        ],
+        [
+            "assistant",
+            "user",
+            "system",
+            "environment",  # environment is tool output in these templates
+            "environment",  # tool alias -> environment
+        ],
+        default=None,
+    )
+
+    is_assistant_seg = df["seg_kind"].eq("assistant")
+    is_user_seg = df["seg_kind"].eq("user")
+    is_system_seg = df["seg_kind"].eq("system")
+    is_env_seg = df["seg_kind"].eq("environment")
+
+    # ---- Single-token wrapper tags (scoped; avoid treating literal mentions as structure) ----
+    # <functions> wrappers are structural in system/user segments only
+    df["is_funcs_open"] = (is_system_seg | is_user_seg) & df["token"].eq(OPEN_FUNCS)
+    df["is_funcs_close"] = (is_system_seg | is_user_seg) & df["token"].eq(CLOSE_FUNCS)
+
+    # <function_calls> wrappers are structural in assistant segments only
+    df["is_fcalls_open"] = is_assistant_seg & df["token"].eq(OPEN_FCALLS)
+    df["is_fcalls_close"] = is_assistant_seg & df["token"].eq(CLOSE_FCALLS)
+
+    # in_function_calls (assistant-only)
+    df["fcalls_open_cum"] = by_seg["is_fcalls_open"].cumsum()
+    df["fcalls_close_cum"] = by_seg["is_fcalls_close"].cumsum()
+    df["in_function_calls"] = df["fcalls_open_cum"] > df["fcalls_close_cum"]
+
+    # ---- Structural newline before <functions> (template-inserted in user when functions appended) ----
+    df["next_token"] = df.groupby("prompt_ix", sort=False)["token"].shift(-1)
+    df["ws_before_functions"] = df["is_pure_nl"] & df["next_token"].eq(OPEN_FUNCS) & (is_user_seg | is_system_seg)
+
+    # ---- Base tag mask (always structural) ----
+    df["is_tag0"] = (
+        df["is_start"] | df["is_end"] | df["is_eos"]
+        | df["is_funcs_open"] | df["is_funcs_close"]
+        | df["is_fcalls_open"] | df["is_fcalls_close"]
+        | df["ws_before_functions"]
+    )
+
+    # ---- Think region detection (assistant-only; <think> is NOT single-token) ----
+    def _mark_think_region(group: pd.DataFrame) -> pd.DataFrame:
+        n = len(group)
+        group["in_think"] = False
+        group["is_think_tag"] = False
+        group["ws_after_think_local"] = False
+
+        if n == 0:
+            return group
+        if group["seg_kind"].iloc[0] != "assistant":
+            return group
+
+        tokens = group["token"].astype(str).tolist()
+        text = "".join(tokens)
+
+        # char offsets -> token indices
+        lengths = np.fromiter((len(t) for t in tokens), dtype=int, count=n)
+        starts = np.zeros(n, dtype=int)
+        if n > 1:
+            starts[1:] = np.cumsum(lengths)[:-1]
+        ends = starts + lengths
+
+        opens = list(re.finditer(re.escape(THINK_OPEN_STR), text))
+        closes = list(re.finditer(re.escape(THINK_CLOSE_STR), text))
+
+        in_think = np.zeros(n, dtype=bool)
+        is_think_tag = np.zeros(n, dtype=bool)
+        ws_after = np.zeros(n, dtype=bool)
+
+        close_i = 0
+        for om in opens:
+            o_start, o_end = om.span()
+
+            # Find the next close that starts after the open tag ends
+            while close_i < len(closes) and closes[close_i].start() < o_end:
+                close_i += 1
+
+            if close_i < len(closes):
+                cm = closes[close_i]
+                close_i += 1
+                c_start, c_end = cm.span()
+
+                # Tag tokens = anything overlapping the open/close tag substrings
+                open_tag = (starts < o_end) & (ends > o_start)
+                close_tag = (starts < c_end) & (ends > c_start)
+                is_think_tag |= open_tag | close_tag
+
+                # Think content = tokens overlapping (o_end, c_start), excluding tag tokens
+                content_mask = (ends > o_end) & (starts < c_start)
+                content_mask &= ~is_think_tag
+                in_think |= content_mask
+
+                # Structural whitespace immediately after </think> (pure newlines until first non-newline non-tag)
+                after_idxs = np.where(starts >= c_end)[0]
+                for idx in after_idxs:
+                    if group["is_tag0"].iloc[idx] or is_think_tag[idx]:
+                        continue
+                    if group["is_pure_nl"].iloc[idx]:
+                        ws_after[idx] = True
+                        continue
+                    break
+            else:
+                # Dangling open: think continues to end of segment
+                open_tag = (starts < o_end) & (ends > o_start)
+                is_think_tag |= open_tag
+
+                # Think content = all tokens after open tag end, excluding tag tokens
+                content_mask = ends > o_end
+                content_mask &= ~is_think_tag
+                in_think |= content_mask
+
+        group["in_think"] = in_think
+        group["is_think_tag"] = is_think_tag
+        group["ws_after_think_local"] = ws_after
+        return group
+
+    df = (
+        df.groupby(["prompt_ix", "seg_id"], sort=False, group_keys=False)
+          .apply(_mark_think_region)
+    )
+
+    # ---- Final tag mask ----
+    df["is_tag"] = df["is_tag0"] | df["is_think_tag"] | df["ws_after_think_local"]
+
+    # Content span = body tokens minus tags
+    df["is_content"] = df["in_body"] & ~df["is_tag"]
+
+    # ---- Role assignment (content-only) ----
+    role = np.array([None] * len(df), dtype=object)
+
+    # system/user/environment
+    role[(is_system_seg & df["is_content"]).to_numpy()] = "system"
+    role[(is_user_seg & df["is_content"]).to_numpy()] = "user"
+    role[(is_env_seg & df["is_content"]).to_numpy()] = "tool"
+
+    # assistant with precedence: tool_call > cot > assistant
+    asst_content = is_assistant_seg & df["is_content"]
+    role[(asst_content & df["in_function_calls"]).to_numpy()] = "tool_call"
+    role[(asst_content & ~df["in_function_calls"] & df["in_think"]).to_numpy()] = "cot"
+    role[(asst_content & ~df["in_function_calls"] & ~df["in_think"]).to_numpy()] = "assistant"
+
+    df["role"] = role
+
+    # ---- seg_ix + token_in_seg_ix (only for labeled tokens; None otherwise) ----
+    is_labeled = df["role"].notna()
+
+    prev_labeled = is_labeled.groupby(df["prompt_ix"], sort=False).shift(1, fill_value=False)
+    prev_role = df.groupby("prompt_ix", sort=False)["role"].shift(1)
+
+    is_new_seg = is_labeled & (~prev_labeled | (df["role"] != prev_role))
+    seg_counter = is_new_seg.groupby(df["prompt_ix"], sort=False).cumsum()  # 1,2,3,...
+
+    df["seg_ix"] = pd.Series(pd.NA, index=df.index, dtype="Int64")
+    df.loc[is_labeled, "seg_ix"] = (seg_counter[is_labeled] - 1).astype("Int64")
+
+    df["token_in_seg_ix"] = pd.Series(pd.NA, index=df.index, dtype="Int64")
+    df.loc[is_labeled, "token_in_seg_ix"] = (
+        df.loc[is_labeled].groupby(["prompt_ix", "seg_ix"], sort=False).cumcount().astype("Int64")
+    )
+
+    # ---- Cleanup helper columns ----
+    drop_cols = [
+        "seg_id",
+        "is_start", "is_end", "is_eos",
+        "has_nl", "is_pure_nl",
+        "nl_cum", "is_first_nl", "before_header", "is_header_token",
+        "is_close", "before_end", "in_body",
+        "header_line", "seg_kind",
+        "is_funcs_open", "is_funcs_close",
+        "is_fcalls_open", "is_fcalls_close",
+        "fcalls_open_cum", "fcalls_close_cum",
+        "in_function_calls",
+        "next_token", "ws_before_functions",
+        "is_tag0",
+        "in_think", "is_think_tag", "ws_after_think_local",
+        "is_tag",
+    ]
+    out = df.drop(columns=drop_cols, errors="ignore")
+
+    out = out.sort_values(["prompt_ix", "token_ix"]).reset_index(drop=True)
+    return out
+
 
 def label_devstral2_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -767,15 +1070,10 @@ def label_devstral2_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     )
     return out
 
+
 def label_qwen3coder_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     """
     Label Qwen3-Coder (ChatML) token streams with content-only roles.
-
-    Returns:
-        - role: one of {system, user, assistant, tool_call, tool} or None
-        - is_content: bool
-        - seg_ix: int or None
-        - token_in_seg_ix: int or None
 
     Description:
         - Messages are ChatML-framed: <|im_start|>{role}\\n ... <|im_end|>\\n.
@@ -788,6 +1086,12 @@ def label_qwen3coder_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         - Newline-only tokens that are ALWAYS template-inserted adjacent to tags (header newline,
           post-<|im_end|> newline, newline immediately after open wrappers, newline immediately
           before close wrappers, and newline immediately before <tool_call>) are non-content.
+
+    Returns:
+        - role: one of {system, user, assistant, tool_call, tool} or None
+        - is_content: bool
+        - seg_ix: int or None
+        - token_in_seg_ix: int or None
     """
     required = {"prompt_ix", "token_ix", "token"}
     missing = required - set(sample_df.columns)
@@ -978,15 +1282,10 @@ def label_qwen3coder_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     )
     return out
 
+
 def label_glm4_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Label GLM-4.6V-Flash token streams with content-only roles.
-
-    Returns:
-        - role: one of {system, user, assistant, cot, tool_call, tool} or None
-        - is_content: bool
-        - seg_ix: Int64 or NA
-        - token_in_seg_ix: Int64 or NA
+    Labels GLM4 token streams with content-only roles.
 
     Description:
         - Role containers start at <|system|>, <|user|>, <|assistant|>, <|observation|> (no explicit end tag).
@@ -995,6 +1294,12 @@ def label_glm4_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
         - Tool-call example text inside the system tools preamble is treated as system content
           (tool wrappers are only active in assistant segments).
         - Pure newline tokens that are template-paired with tags are structural (non-content).
+    
+    Returns:
+        - role: one of {system, user, assistant, cot, tool_call, tool} or None
+        - is_content: bool
+        - seg_ix: int or None
+        - token_in_seg_ix: int or None
     """
     required = {"prompt_ix", "token_ix", "token"}
     missing = required - set(sample_df.columns)
@@ -1003,7 +1308,7 @@ def label_glm4_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
 
     # ---- Sentinels / wrappers (assumed single-token) ----
     SYSTEM    = "<|system|>"
-    USER      = "<|user|>"
+    USER = "<|user|>"
     ASSISTANT = "<|assistant|>"
     OBS       = "<|observation|>"
 
@@ -1043,14 +1348,9 @@ def label_glm4_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     )
 
     df["seg_kind"] = np.select(
-        [
-            df["seg_role_token"].eq(SYSTEM),
-            df["seg_role_token"].eq(USER),
-            df["seg_role_token"].eq(ASSISTANT),
-            df["seg_role_token"].eq(OBS),
-        ],
+        [df["seg_role_token"].eq(SYSTEM), df["seg_role_token"].eq(USER), df["seg_role_token"].eq(ASSISTANT), df["seg_role_token"].eq(OBS)],
         ["system", "user", "assistant", "observation"],
-        default=None,
+        default = None,
     )
 
     in_segment = df["seg_id"] > 0
@@ -1201,7 +1501,7 @@ def label_glm4_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def label_content_roles(model_architecture, sample_df):
+def label_content_roles(model_prefix, sample_df):
     """
     Takes a token-level df, labels each token with its role only within the content span. Makes no assumption about the number of messages in the sequence.
     The input is a token-level dataframe spanning multiple prompts (conversations). Each prompt is identified by prompt_ix and contains a flat serialized token stream (including template tags, role sentinels, wrappers, and semantic content).
@@ -1231,19 +1531,17 @@ def label_content_roles(model_architecture, sample_df):
         raise ValueError(f"sample_df missing required columns: {sorted(missing)}")
 
     dispatch = {
-        "gptoss": label_gptoss_content_roles,
-        "glm46v": label_glm4_content_roles,
-        # "olmo3": label_olmo3_content_roles,
-        "apriel": label_apriel_content_roles,
-        "devstral2": label_devstral2_content_roles,
-        "qwen3moe": label_qwen3coder_content_roles
+        'gptoss20': label_gptoss_content_roles,
+        'gptoss120': label_gptoss_content_roles,
+        'olmo3-7i': label_olmo3_content_roles,
+        'glm-46v-flash': label_glm4_content_roles,
+        'apriel': label_apriel_content_roles,
+        'qwen3coder': label_qwen3coder_content_roles
     }
 
-    if model_architecture == "devstral2":
-        raise NotImplementedError("devstral2 not yet supported")
     try:
-        fn = dispatch[model_architecture]
+        fn = dispatch[model_prefix]
     except KeyError:
-        raise ValueError(f"Model architecture {model_architecture} not supported")
+        raise ValueError(f"Model architecture {model_prefix} not supported")
 
     return fn(sample_df)

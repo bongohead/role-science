@@ -113,36 +113,17 @@ def render_single_apriel(role, content):
         return f"<|begin_assistant|>\n[BEGIN FINAL RESPONSE]\n{content}\n<|end|>"
     elif role == 'tool':
         return f"<|begin_tool_result|>\n{content}\n\n\n"
-    
-def render_single_devstral2(role, content):
-    """
-    Render for Devstral format
-    """
-    if role == 'system':
-        return f"[SYSTEM_PROMPT]{content}[/SYSTEM_PROMPT]"
-    elif role == 'user':
-        return f"[INST]{content}[/INST]"
-    elif role == 'assistant':
-        return f"{content}"
-    elif role == 'tool':
-        return f"[TOOL_RESULTS]{content}[/TOOL_RESULTS]"
-    else:
-        raise ValueError("Invalid role!")
 
-
-def render_single_message(model_architecture, role, content, tool_name = None) -> str:
+def render_single_message(model_prefix, role, content, tool_name = None) -> str:
     """
     Params:
-        @model_architecture: One of several suppored model types, includes:
-            - gptoss
-            - qwen3moe
-            - glm4moe
+        @model_architecture: The model prefix; see code for supported models
         @role: One of several suppored roles, includes:
             - system
             - developer (only gpt-oss)
             - user
-            - assistant-cot
-            - assistant-final
+            - cot
+            - final
             - tool
         @content: The content of the message.
         @tool_name: The name of the tool to use (only for gpt-oss)
@@ -150,25 +131,22 @@ def render_single_message(model_architecture, role, content, tool_name = None) -
     Example:
         render_single_message('gptoss', 'user', None)
     """
-    if model_architecture == 'gptoss':
+    if model_prefix in ['gptoss20', 'gptoss120']:
         res = render_single_gptoss(role, content, tool_name = tool_name)
-    elif model_architecture == 'qwen3moe':
+    elif model_prefix in ['qwen3coder']:
         res = render_single_qwen3(role, content)
-    elif model_architecture == 'glm46v':
+    elif model_prefix in ['glm-46v-flash']:
         res = render_single_glm4(role, content)
-    elif model_architecture == 'olmo3':
+    elif model_prefix in ['olmo3-7i']:
         res = render_single_olmo3(role, content)
-    elif model_architecture == 'apriel':
+    elif model_prefix in ['apriel-16']:
         res = render_single_apriel(role, content)
-    elif model_architecture == 'mistral3':
-        res = render_single_devstral2(role, content)
     else:
         raise ValueError("Invalid model!")
 
     return res
 
-
-def render_mixed_cot(model_architecture, cot, assistant) -> str:
+def render_mixed_cot(model_prefix, cot, assistant) -> str:
     """
     Renders a mixed cot + assistant message
 
@@ -180,52 +158,57 @@ def render_mixed_cot(model_architecture, cot, assistant) -> str:
     Example:
         render_mixed_cot('gptoss', 'The user says..', 'The user says')
     """
-    if model_architecture == 'gptoss':
+    if model_prefix in ['gptoss20', 'gptoss120']:
         return f"<|start|>assistant<|channel|>analysis<|message|>{cot}<|end|><|start|>assistant<|channel|>final<|message|>{assistant}<|end|>"
-    elif model_architecture  == 'qwen3moe':
+    elif model_prefix in ['qwen3coder']:
         return f"<|im_start|>assistant\n<think>\n{cot}\n</think>\n\n{assistant}<|im_end|>\n"
-    elif model_architecture in ['glm4vmoe','glm46v']:
+    elif model_prefix in ['glm-46v-flash']:
         return f"<|assistant|>\n<think>{cot}</think>\n{assistant}"
-    elif model_architecture == 'olmo3':
+    elif model_prefix in ['olmo3-7i']:
         return f"<|im_start|>assistant\n<think>{cot}</think>{assistant}<|im_end|>\n"
-    elif model_architecture == 'apriel':
+    elif model_prefix in ['apriel-16']:
         return f"<|begin_assistant|>\nHere are my reasoning steps:\n{cot}\n[BEGIN FINAL RESPONSE]\n{assistant}\n<|end|>\n"
-    elif model_architecture == 'devstral2':
-        return f"{assistant}"
-
     else:
         raise ValueError("Invalid model!")
 
-def load_chat_template(parent_dir, model_architecture) -> str:
+def load_chat_template(parent_dir, model_prefix) -> str:
     """
     Load a J2 chat template file for use in apply_chat_template; these are slightly modified versions of the real chat template. 
      No other changes are made other than those listed below.
 
     Description:
-        These are created by taking the default tokenizer.chat_template and applying minimal model-specific changes listed below.
+        These are created by taking the default tokenizer.chat_template and applying minimal model-specific changes listed below. 
+        These are modified for consistency such that for all models:
+        - There's no default system prompt
+        - Thinking tags aren't stripped (for reasoning models)
+        - 
     
     Notes:
-        - For Qwen3MoE, this:
-            (1) prevents old <think></think> tags from being stripped.
-        - For GLM4, this does not; it's just the standard chat template.
-            (1) removes the [gMASK]<sop> prefix (add it back yourself)
         - For GPT-OSS, this:
             (1) removes the default system prompt;
             (2) has {"role": "system", "content", "..."} propagate to the system prompt instead of the developer prompt;
             (3) supports passing <think> directly (instead of a separate thinking key as in https://huggingface.co/spaces/huggingfacejs/chat-template-playground?modelId=openai%2Fgpt-oss-20b&example=hello-world).
+        - For Qwen, this:
+            (1) prevents old <think></think> tags from being stripped.
+        - For GLM4, this does not; it's just the standard chat template.
+            (1) removes the [gMASK]<sop> prefix
+        - For Olmo3, this:
+            (1) does nothing, it's just the base template
+        - For Apriel, this:
+            (1) removes the default system prompt
     """
-    if model_architecture == 'gptoss':
+    if model_prefix in ['gptoss20', 'gptoss120']:
         instruct_format = 'gptoss'
-    elif model_architecture == 'qwen3moe':
+    elif model_prefix in ['qwen3coder']:
         instruct_format = 'qwen3'
-    elif model_architecture == 'glm46v':
+    elif model_prefix in ['glm-46v-flash']:
         instruct_format = 'glm4'
-    elif model_architecture == 'olmo3':
+    elif model_prefix in ['olmo3-7i']:
         instruct_format = 'olmo3'
-    elif model_architecture == 'apriel':
+    elif model_prefix in ['apriel-16']:
         instruct_format = 'apriel'
     else:
-        raise ValueError(f"Model prefix {model_architecture} not supported")
+        raise ValueError(f"Model prefix {model_prefix} not supported")
 
     with open(f'{parent_dir}/{instruct_format}.j2', 'r') as f:
         chat_template_str = f.read()
