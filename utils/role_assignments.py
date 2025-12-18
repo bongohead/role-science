@@ -437,7 +437,7 @@ def label_apriel_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
                     break
 
         # ---------------------------------------------------------------------
-        # NEW: assistant-only structural whitespace adjacency
+        # assistant-only structural whitespace adjacency
         # - newline-only tokens immediately BEFORE or AFTER:
         #     * reasoning header prefix
         #     * final marker
@@ -533,6 +533,674 @@ def label_apriel_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     )
     return out
 
+
+def label_devstral2_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Label Devstral-Small-2-24B-Instruct token streams with content-only roles.
+
+    Returns:
+        Original df + {role, is_content, seg_ix, token_in_seg_ix}.
+
+    Description:
+        - `[AVAILABLE_TOOLS] ... [/AVAILABLE_TOOLS]` content is labeled as `system` (wrappers are non-content).
+        - Assistant has no explicit opener: any tokens outside bracketed blocks after a `[/INST]` (or `[/TOOL_RESULTS]`)
+          are treated as assistant content until `</s>`; if `</s>` is missing (truncated), a new `[INST]` or
+          `[TOOL_RESULTS]` implicitly ends the assistant span.
+        - Tool calls have no explicit closer: tool_call content starts after `[TOOL_CALLS]` and runs until `</s>`
+          or a new top-level block; `[ARGS]` is structural.
+        - All wrappers (`[INST]`, `[/INST]`, `[SYSTEM_PROMPT]`, `[/SYSTEM_PROMPT]`, `[AVAILABLE_TOOLS]`, `[/AVAILABLE_TOOLS]`,
+          `[TOOL_RESULTS]`, `[/TOOL_RESULTS]`, `[TOOL_CALLS]`, `[ARGS]`, `[IMG]`, `<s>`, `</s>`) are non-content (role=None).
+    """
+    required = {"prompt_ix", "token_ix", "token"}
+    missing = required - set(sample_df.columns)
+    if missing:
+        raise ValueError(f"sample_df missing required columns: {sorted(missing)}")
+
+    TAG_SPECS = [
+        ("bos", "<s>"),
+        ("eos", "</s>"),
+        ("sys_open", "[SYSTEM_PROMPT]"),
+        ("sys_close", "[/SYSTEM_PROMPT]"),
+        ("tools_open", "[AVAILABLE_TOOLS]"),
+        ("tools_close", "[/AVAILABLE_TOOLS]"),
+        ("inst_open", "[INST]"),
+        ("inst_close", "[/INST]"),
+        ("toolres_open", "[TOOL_RESULTS]"),
+        ("toolres_close", "[/TOOL_RESULTS]"),
+        ("toolcalls", "[TOOL_CALLS]"),
+        ("args", "[ARGS]"),
+        ("img", "[IMG]"),
+    ]
+
+    def _find_token_spans(text: str, starts: np.ndarray, ends: np.ndarray, literal: str):
+        """Find occurrences of `literal` in `text`, return spans as (tok_start, tok_end)."""
+        spans = []
+        for m in re.finditer(re.escape(literal), text):
+            cs, ce = m.start(), m.end()
+            tok_start = int(np.searchsorted(ends, cs, side="right"))
+            tok_end = int(np.searchsorted(starts, ce, side="left") - 1)
+            if 0 <= tok_start <= tok_end < len(starts):
+                spans.append((tok_start, tok_end))
+        return spans
+
+    def _process_prompt(g: pd.DataFrame) -> pd.DataFrame:
+        g = g.sort_values("token_ix").reset_index(drop=True).copy()
+        toks = g["token"].astype(str).tolist()
+        n = len(toks)
+
+        # Build char offsets to map substring matches back to token indices
+        lens = np.fromiter((len(t) for t in toks), dtype=int, count=n)
+        starts = np.zeros(n, dtype=int)
+        if n > 1:
+            starts[1:] = np.cumsum(lens)[:-1]
+        ends = starts + lens
+        text = "".join(toks)
+
+        # Precompute possible tag spans; we still context-gate acceptance during scanning.
+        events_start: dict[int, list[tuple[str, int, int]]] = {}
+        for tag_name, literal in TAG_SPECS:
+            for s, e in _find_token_spans(text, starts, ends, literal):
+                events_start.setdefault(s, []).append((tag_name, e, len(literal)))
+
+        # Prefer longer literals if multiple tags start at the same token index
+        for s in events_start:
+            events_start[s].sort(key=lambda x: (-x[2], -(x[1] - s)))
+
+        # FSM state
+        mode = "outside"  # outside | system | available_tools | user | tool_results | assistant
+        in_tool_call = False
+        seen_user = False  # used only to gate system_open to the very beginning
+
+        role = np.array([None] * n, dtype=object)
+
+        def _accept(tag: str) -> bool:
+            nonlocal mode, in_tool_call, seen_user
+
+            if tag in ("bos", "eos"):
+                return True
+
+            if tag == "sys_open":
+                return mode == "outside" and not seen_user
+            if tag == "sys_close":
+                return mode == "system"
+
+            if tag == "tools_open":
+                return mode == "outside"
+            if tag == "tools_close":
+                return mode == "available_tools"
+
+            if tag == "inst_open":
+                # allow this even if EOS is missing (truncated assistant)
+                return mode in ("outside", "assistant")
+            if tag == "inst_close":
+                return mode == "user"
+
+            if tag == "toolres_open":
+                # allow this even if EOS is missing (truncated assistant)
+                return mode in ("outside", "assistant")
+            if tag == "toolres_close":
+                return mode == "tool_results"
+
+            if tag == "toolcalls":
+                return mode == "assistant"
+            if tag == "args":
+                return mode == "assistant" and in_tool_call
+            if tag == "img":
+                return mode == "user"
+
+            return False
+
+        def _transition(tag: str):
+            nonlocal mode, in_tool_call, seen_user
+
+            if tag == "bos":
+                return
+            if tag == "eos":
+                mode = "outside"
+                in_tool_call = False
+                return
+
+            if tag == "sys_open":
+                mode = "system"
+                return
+            if tag == "sys_close":
+                mode = "outside"
+                return
+
+            if tag == "tools_open":
+                mode = "available_tools"
+                return
+            if tag == "tools_close":
+                mode = "outside"
+                return
+
+            if tag == "inst_open":
+                mode = "user"
+                in_tool_call = False
+                seen_user = True
+                return
+            if tag == "inst_close":
+                mode = "assistant"
+                in_tool_call = False
+                return
+
+            if tag == "toolres_open":
+                mode = "tool_results"
+                in_tool_call = False
+                return
+            if tag == "toolres_close":
+                mode = "assistant"
+                in_tool_call = False
+                return
+
+            if tag == "toolcalls":
+                in_tool_call = True
+                return
+            if tag == "args":
+                return
+            if tag == "img":
+                return
+
+        i = 0
+        while i < n:
+            accepted = False
+            if i in events_start:
+                for tag_name, tag_end, _ in events_start[i]:
+                    if _accept(tag_name):
+                        # Tag span => structural (role None)
+                        role[i : tag_end + 1] = None
+                        _transition(tag_name)
+                        i = tag_end + 1
+                        accepted = True
+                        break
+            if accepted:
+                continue
+
+            # Content token (role depends on current mode)
+            if mode == "system":
+                role[i] = "system"
+            elif mode == "available_tools":
+                role[i] = "system"  # explicit design choice: AVAILABLE_TOOLS content is system
+            elif mode == "user":
+                role[i] = "user"
+            elif mode == "tool_results":
+                role[i] = "tool"
+            elif mode == "assistant":
+                role[i] = "tool_call" if in_tool_call else "assistant"
+            else:
+                role[i] = None
+
+            i += 1
+
+        # Content mask is exactly "role is not None"
+        role_s = pd.Series(role, index=g.index, dtype="object")
+        is_content = role_s.notna()
+
+        # seg_ix / token_in_seg_ix only for labeled tokens
+        prev_labeled = is_content.shift(1, fill_value=False)
+        prev_role = role_s.shift(1)
+
+        is_new_seg = is_content & (~prev_labeled | (role_s != prev_role))
+        seg_counter = is_new_seg.cumsum()
+
+        seg_ix = pd.Series(pd.NA, index=g.index, dtype="Int64")
+        seg_ix.loc[is_content] = (seg_counter.loc[is_content] - 1).astype("Int64")
+
+        token_in_seg_ix = pd.Series(pd.NA, index=g.index, dtype="Int64")
+        token_in_seg_ix.loc[is_content] = (
+            g.loc[is_content].groupby(seg_ix.loc[is_content], sort=False).cumcount().astype("Int64")
+        )
+
+        g["role"] = role_s.where(is_content, None)
+        g["is_content"] = is_content.astype(bool)
+        g["seg_ix"] = seg_ix
+        g["token_in_seg_ix"] = token_in_seg_ix
+        return g
+
+    out = (
+        sample_df
+        .sort_values(["prompt_ix", "token_ix"])
+        .groupby("prompt_ix", sort=False, group_keys=False)
+        .apply(_process_prompt)
+        .sort_values(["prompt_ix", "token_ix"])
+        .reset_index(drop=True)
+    )
+    return out
+
+def label_qwen3coder_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Label Qwen3-Coder (ChatML) token streams with content-only roles.
+
+    Returns:
+        - role: one of {system, user, assistant, tool_call, tool} or None
+        - is_content: bool
+        - seg_ix: int or None
+        - token_in_seg_ix: int or None
+
+    Description:
+        - Messages are ChatML-framed: <|im_start|>{role}\\n ... <|im_end|>\\n.
+        - Tool calls are delimited by <tool_call>...</tool_call> inside assistant messages
+          (wrappers are structural/non-content).
+        - Tool results are encoded inside user messages as <tool_response>...</tool_response>
+          blocks (wrappers are structural/non-content; block contents are role=tool).
+        - The injected tools schema block is treated as system content (i.e., <tool_call> text in
+          the system instructions is NOT treated as a tool-call wrapper).
+        - Newline-only tokens that are ALWAYS template-inserted adjacent to tags (header newline,
+          post-<|im_end|> newline, newline immediately after open wrappers, newline immediately
+          before close wrappers, and newline immediately before <tool_call>) are non-content.
+    """
+    required = {"prompt_ix", "token_ix", "token"}
+    missing = required - set(sample_df.columns)
+    if missing:
+        raise ValueError(f"sample_df missing required columns: {sorted(missing)}")
+
+    IM_START = "<|im_start|>"
+    IM_END = "<|im_end|>"
+
+    TOOL_CALL_OPEN = "<tool_call>"
+    TOOL_CALL_CLOSE = "</tool_call>"
+    TOOL_RESP_OPEN = "<tool_response>"
+    TOOL_RESP_CLOSE = "</tool_response>"
+
+    # Newline-only token detector (covers common newline glyphs too)
+    NL_ONLY_RE = re.compile(r"^[\nĊĉĈ]+$")
+
+    def _norm_nl(s: str) -> str:
+        # Normalize common "newline glyph" tokens to '\n' so header detection works reliably.
+        return s.replace("Ċ", "\n").replace("ĉ", "\n").replace("Ĉ", "\n")
+
+    def _process_prompt(g: pd.DataFrame) -> pd.DataFrame:
+        g = g.sort_values("token_ix").reset_index(drop=True)
+        toks = g["token"].astype(str).tolist()
+        n = len(toks)
+
+        # Fast primitive masks
+        is_im_start = np.fromiter((t == IM_START for t in toks), dtype=bool, count=n)
+        is_im_end = np.fromiter((t == IM_END for t in toks), dtype=bool, count=n)
+        is_nl_only = np.fromiter((NL_ONLY_RE.fullmatch(t) is not None for t in toks), dtype=bool, count=n)
+
+        # ---- Pass 1: assign ChatML container role per token (system/user/assistant) and header tokens ----
+        container = np.array([None] * n, dtype=object)      # role for BODY tokens only
+        is_header_tok = np.zeros(n, dtype=bool)
+
+        in_msg = False
+        in_header = False
+        header_buf = ""
+        current_role = None
+
+        for i, tok in enumerate(toks):
+            if tok == IM_START:
+                in_msg = True
+                in_header = True
+                header_buf = ""
+                current_role = None
+                continue
+
+            if tok == IM_END:
+                in_msg = False
+                in_header = False
+                current_role = None
+                continue
+
+            if in_header:
+                # Everything between <|im_start|> and the first newline char is structural header.
+                is_header_tok[i] = True
+                header_buf += tok
+
+                if "\n" in _norm_nl(tok):
+                    # Role is whatever precedes the first newline in the header buffer.
+                    role_part = _norm_nl(header_buf).split("\n", 1)[0].strip()
+                    current_role = role_part
+                    in_header = False
+                continue
+
+            if in_msg:
+                container[i] = current_role
+
+        # ---- Wrapper tags (structural only in the intended container role) ----
+        tok_eq = np.fromiter  # alias
+
+        is_tool_call_open = tok_eq((t == TOOL_CALL_OPEN for t in toks), dtype=bool, count=n) & (container == "assistant")
+        is_tool_call_close = tok_eq((t == TOOL_CALL_CLOSE for t in toks), dtype=bool, count=n) & (container == "assistant")
+
+        is_tool_resp_open = tok_eq((t == TOOL_RESP_OPEN for t in toks), dtype=bool, count=n) & (container == "user")
+        is_tool_resp_close = tok_eq((t == TOOL_RESP_CLOSE for t in toks), dtype=bool, count=n) & (container == "user")
+
+        # Depths (open included; close excluded). Tag mask will remove the open token anyway.
+        tool_call_depth = np.cumsum(is_tool_call_open.astype(int) - is_tool_call_close.astype(int))
+        in_tool_call = tool_call_depth > 0
+
+        tool_resp_depth = np.cumsum(is_tool_resp_open.astype(int) - is_tool_resp_close.astype(int))
+        in_tool_resp = tool_resp_depth > 0
+
+        # ---- Structural newline-only tokens always paired with tags ----
+        # - newline immediately after <|im_end|> is always template-inserted
+        prev_is_im_end = np.concatenate([[False], is_im_end[:-1]])
+        is_nl_after_im_end = is_nl_only & prev_is_im_end
+
+        # - newline immediately after open wrappers is always template-inserted
+        prev_is_open_wrapper = np.concatenate([[False], (is_tool_call_open | is_tool_resp_open)[:-1]])
+        is_nl_after_open_wrapper = is_nl_only & prev_is_open_wrapper
+
+        # - newline immediately before close wrappers is always template-inserted
+        next_is_close_wrapper = np.concatenate([(is_tool_call_close | is_tool_resp_close)[1:], [False]])
+        is_nl_before_close_wrapper = is_nl_only & next_is_close_wrapper
+
+        # - newline immediately after </tool_response> is always template-inserted
+        prev_is_tool_resp_close = np.concatenate([[False], is_tool_resp_close[:-1]])
+        is_nl_after_tool_resp_close = is_nl_only & prev_is_tool_resp_close
+
+        # - newline immediately before <tool_call> is always template-inserted by the template branch that emits tool calls
+        next_is_tool_call_open = np.concatenate([is_tool_call_open[1:], [False]])
+        is_nl_before_tool_call_open = is_nl_only & next_is_tool_call_open
+
+        is_struct_nl = (
+            is_nl_after_im_end
+            | is_nl_after_open_wrapper
+            | is_nl_before_close_wrapper
+            | is_nl_after_tool_resp_close
+            | is_nl_before_tool_call_open
+        )
+
+        # ---- Tag mask ----
+        # Note: We treat <tool_call> / <tool_response> as tags ONLY when they are wrappers
+        # (i.e., in assistant/user containers respectively). This prevents mislabeling the
+        # system tool-instruction example text as structural.
+        is_tag = (
+            is_im_start
+            | is_im_end
+            | is_header_tok
+            | is_tool_call_open | is_tool_call_close
+            | is_tool_resp_open | is_tool_resp_close
+            | is_struct_nl
+        )
+
+        # ---- Content + role assignment ----
+        is_content = (container != None) & ~is_tag
+
+        role = np.array([None] * n, dtype=object)
+
+        # Base container roles
+        role[is_content & (container == "system")] = "system"
+
+        user_content = is_content & (container == "user")
+        role[user_content & in_tool_resp] = "tool"
+        role[user_content & ~in_tool_resp] = "user"
+
+        asst_content = is_content & (container == "assistant")
+        role[asst_content & in_tool_call] = "tool_call"
+        role[asst_content & ~in_tool_call] = "assistant"
+
+        g["is_content"] = is_content.astype(bool)
+        g["role"] = role
+
+        # ---- seg_ix + token_in_seg_ix (per prompt; only for role!=None) ----
+        is_labeled = role != None
+
+        prev_labeled = np.concatenate([[False], is_labeled[:-1]])
+        prev_role = np.concatenate([[None], role[:-1]])
+
+        is_new_seg = is_labeled & (~prev_labeled | (role != prev_role))
+        seg_counter = np.cumsum(is_new_seg.astype(int))  # 1,2,3,... at segment starts
+
+        seg_ix_int = np.full(n, -1, dtype=int)
+        seg_ix_int[is_labeled] = (seg_counter[is_labeled] - 1)
+
+        token_in_seg_int = np.full(n, -1, dtype=int)
+        prev_seg = -1
+        pos = 0
+        for i in range(n):
+            s = seg_ix_int[i]
+            if s < 0:
+                prev_seg = -1
+                continue
+            if s != prev_seg:
+                prev_seg = s
+                pos = 0
+            else:
+                pos += 1
+            token_in_seg_int[i] = pos
+
+        seg_ix_series = pd.Series(seg_ix_int, dtype="Int64").mask(pd.Series(seg_ix_int) < 0)
+        tok_in_seg_series = pd.Series(token_in_seg_int, dtype="Int64").mask(pd.Series(token_in_seg_int) < 0)
+
+        g["seg_ix"] = seg_ix_series
+        g["token_in_seg_ix"] = tok_in_seg_series
+        return g
+
+    out = (
+        sample_df
+        .sort_values(["prompt_ix", "token_ix"])
+        .groupby("prompt_ix", sort=False, group_keys=False)
+        .apply(_process_prompt)
+        .sort_values(["prompt_ix", "token_ix"])
+        .reset_index(drop=True)
+    )
+    return out
+
+def label_glm4_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Label GLM-4.6V-Flash token streams with content-only roles.
+
+    Returns:
+        - role: one of {system, user, assistant, cot, tool_call, tool} or None
+        - is_content: bool
+        - seg_ix: Int64 or NA
+        - token_in_seg_ix: Int64 or NA
+
+    Description:
+        - Role containers start at <|system|>, <|user|>, <|assistant|>, <|observation|> (no explicit end tag).
+        - Assistant-only wrappers: <think>...</think> => cot; <tool_call>...</tool_call> => tool_call.
+        - Observation tool output is wrapped in <tool_response>...</tool_response> (wrappers are structural).
+        - Tool-call example text inside the system tools preamble is treated as system content
+          (tool wrappers are only active in assistant segments).
+        - Pure newline tokens that are template-paired with tags are structural (non-content).
+    """
+    required = {"prompt_ix", "token_ix", "token"}
+    missing = required - set(sample_df.columns)
+    if missing:
+        raise ValueError(f"sample_df missing required columns: {sorted(missing)}")
+
+    # ---- Sentinels / wrappers (assumed single-token) ----
+    SYSTEM    = "<|system|>"
+    USER      = "<|user|>"
+    ASSISTANT = "<|assistant|>"
+    OBS       = "<|observation|>"
+
+    PREFIX_TOKENS = {"[gMASK]", "<sop>", "<eop>"}
+
+    THINK_OPEN, THINK_CLOSE = "<think>", "</think>"
+
+    TCALL_OPEN, TCALL_CLOSE = "<tool_call>", "</tool_call>"
+    TRESP_OPEN, TRESP_CLOSE = "<tool_response>", "</tool_response>"
+
+    ARGK_OPEN, ARGK_CLOSE = "<arg_key>", "</arg_key>"
+    ARGV_OPEN, ARGV_CLOSE = "<arg_value>", "</arg_value>"
+
+    NOTHINK = "/nothink"
+
+    ROLE_SENTINELS = {SYSTEM, USER, ASSISTANT, OBS}
+
+    # Newline-only token detector (covers common newline glyphs)
+    NL_ONLY_RE = re.compile(r"^[\nĊĉĈ]+$")
+
+    df = (
+        sample_df
+        .sort_values(["prompt_ix", "token_ix"])
+        .reset_index(drop=True)
+        .copy()
+    )
+
+    # ---- Segment by role sentinel ----
+    df["is_seg_start"] = df["token"].isin(ROLE_SENTINELS)
+    df["seg_id"] = df.groupby("prompt_ix", sort=False)["is_seg_start"].cumsum()
+
+    df["seg_role_token"] = (
+        df["token"].where(df["is_seg_start"])
+          .groupby([df["prompt_ix"], df["seg_id"]], sort=False)
+          .transform("first")
+          .fillna("")
+    )
+
+    df["seg_kind"] = np.select(
+        [
+            df["seg_role_token"].eq(SYSTEM),
+            df["seg_role_token"].eq(USER),
+            df["seg_role_token"].eq(ASSISTANT),
+            df["seg_role_token"].eq(OBS),
+        ],
+        ["system", "user", "assistant", "observation"],
+        default=None,
+    )
+
+    in_segment = df["seg_id"] > 0
+    is_assistant_seg = df["seg_kind"].eq("assistant")
+    is_observation_seg = df["seg_kind"].eq("observation")
+
+    # ---- Pure newline tokens ----
+    df["is_pure_nl"] = df["token"].astype(str).str.fullmatch(NL_ONLY_RE, na=False)
+
+    # prev/next token (within prompt)
+    df["prev_token"] = df.groupby("prompt_ix", sort=False)["token"].shift(1)
+    df["next_token"] = df.groupby("prompt_ix", sort=False)["token"].shift(-1)
+
+    # ---- Wrapper tags (scoped so system examples remain content) ----
+    # Assistant-only wrappers
+    df["is_think_open"]  = is_assistant_seg & df["token"].eq(THINK_OPEN)
+    df["is_think_close"] = is_assistant_seg & df["token"].eq(THINK_CLOSE)
+
+    df["is_tcall_open"]  = is_assistant_seg & df["token"].eq(TCALL_OPEN)
+    df["is_tcall_close"] = is_assistant_seg & df["token"].eq(TCALL_CLOSE)
+
+    # Observation-only wrappers
+    df["is_tresp_open"]  = is_observation_seg & df["token"].eq(TRESP_OPEN)
+    df["is_tresp_close"] = is_observation_seg & df["token"].eq(TRESP_CLOSE)
+
+    # We'll treat arg tags as structural only *inside* tool_call blocks (assistant segments)
+    # (this avoids mislabeling if the assistant outputs these strings outside a tool call)
+    by_seg = df.groupby(["prompt_ix", "seg_id"], sort=False)
+
+    df["tcall_open_cum"]  = by_seg["is_tcall_open"].cumsum()
+    df["tcall_close_cum"] = by_seg["is_tcall_close"].cumsum()
+    df["in_tool_call"] = df["tcall_open_cum"] > df["tcall_close_cum"]
+
+    df["think_open_cum"]  = by_seg["is_think_open"].cumsum()
+    df["think_close_cum"] = by_seg["is_think_close"].cumsum()
+    df["in_think"] = df["think_open_cum"] > df["think_close_cum"]
+
+    # tool_response membership (observation)
+    df["tresp_open_cum"]  = by_seg["is_tresp_open"].cumsum()
+    df["tresp_close_cum"] = by_seg["is_tresp_close"].cumsum()
+    df["in_tool_response"] = df["tresp_open_cum"] > df["tresp_close_cum"]
+
+    df["is_argk_open"]  = is_assistant_seg & df["in_tool_call"] & df["token"].eq(ARGK_OPEN)
+    df["is_argk_close"] = is_assistant_seg & df["in_tool_call"] & df["token"].eq(ARGK_CLOSE)
+    df["is_argv_open"]  = is_assistant_seg & df["in_tool_call"] & df["token"].eq(ARGV_OPEN)
+    df["is_argv_close"] = is_assistant_seg & df["in_tool_call"] & df["token"].eq(ARGV_CLOSE)
+
+    # ---- Base tag mask (wrappers/sentinels/control tokens) ----
+    df["is_prefix"] = (df["seg_id"].eq(0)) & df["token"].isin(PREFIX_TOKENS)
+    df["is_role_sentinel"] = df["token"].isin(ROLE_SENTINELS)
+    df["is_nothink"] = df["token"].eq(NOTHINK)
+
+    df["is_tag0"] = (
+        df["is_prefix"]
+        | df["is_role_sentinel"]
+        | df["is_nothink"]
+        | df["is_think_open"] | df["is_think_close"]
+        | df["is_tcall_open"] | df["is_tcall_close"]
+        | df["is_argk_open"]  | df["is_argk_close"]
+        | df["is_argv_open"]  | df["is_argv_close"]
+        | df["is_tresp_open"] | df["is_tresp_close"]
+    )
+
+    # ---- Structural newline rules (pure newline tokens only; paired-with-tag cases) ----
+    # We intentionally do NOT treat newline before /nothink as structural.
+    struct_nl = df["is_pure_nl"] & (
+        # Newline immediately after a role sentinel is template-inserted
+        df["prev_token"].isin([SYSTEM, USER, ASSISTANT, OBS])
+
+        # Assistant: newline immediately before <think> or <tool_call> is template-inserted
+        | (is_assistant_seg & df["next_token"].isin([THINK_OPEN, TCALL_OPEN]))
+
+        # Assistant: newline immediately after </think> (before visible answer) is template-inserted
+        | (is_assistant_seg & df["prev_token"].eq(THINK_CLOSE))
+
+        # Tool-call formatting: newline tokens around arg tags are template-inserted
+        | (is_assistant_seg & df["in_tool_call"] & (
+            df["next_token"].isin([ARGK_OPEN, TCALL_CLOSE])          # e.g., after tool name or before </tool_call>
+            | df["prev_token"].isin([ARGK_CLOSE, ARGV_CLOSE])        # between </arg_key> and <arg_value>, between args
+        ))
+
+        # Observation: tool_response wrapper newlines are template-inserted
+        | (is_observation_seg & (
+            df["prev_token"].isin([OBS, TRESP_OPEN, TRESP_CLOSE])    # after observation sentinel/open/close
+            | df["next_token"].isin([TRESP_OPEN, TRESP_CLOSE])       # before open/close
+        ))
+    )
+
+    df["is_tag"] = df["is_tag0"] | struct_nl
+
+    # ---- Content tokens ----
+    df["is_content"] = in_segment & ~df["is_tag"]
+
+    # ---- Role assignment (content-only) ----
+    role = np.array([None] * len(df), dtype=object)
+
+    # system / user
+    role[(df["seg_kind"].eq("system") & df["is_content"]).to_numpy()] = "system"
+    role[(df["seg_kind"].eq("user") & df["is_content"]).to_numpy()] = "user"
+
+    # assistant: tool_call > cot > assistant
+    asst_content = is_assistant_seg & df["is_content"]
+    role[(asst_content & df["in_tool_call"]).to_numpy()] = "tool_call"
+    role[(asst_content & ~df["in_tool_call"] & df["in_think"]).to_numpy()] = "cot"
+    role[(asst_content & ~df["in_tool_call"] & ~df["in_think"]).to_numpy()] = "assistant"
+
+    # observation: tool (we assume tool output lives in <tool_response>, but after stripping structural whitespace,
+    # this typically equals “all remaining observation content”)
+    obs_content = is_observation_seg & df["is_content"]
+    role[obs_content.to_numpy()] = "tool"
+
+    df["role"] = role
+
+    # ---- seg_ix + token_in_seg_ix (only for labeled tokens) ----
+    is_labeled = df["role"].notna()
+
+    prev_labeled = is_labeled.groupby(df["prompt_ix"], sort=False).shift(1, fill_value=False)
+    prev_role = df.groupby("prompt_ix", sort=False)["role"].shift(1)
+
+    is_new_seg = is_labeled & (~prev_labeled | (df["role"] != prev_role))
+    seg_counter = is_new_seg.groupby(df["prompt_ix"], sort=False).cumsum()  # 1,2,3,...
+
+    df["seg_ix"] = pd.Series(pd.NA, index=df.index, dtype="Int64")
+    df.loc[is_labeled, "seg_ix"] = (seg_counter[is_labeled] - 1).astype("Int64")
+
+    df["token_in_seg_ix"] = pd.Series(pd.NA, index=df.index, dtype="Int64")
+    df.loc[is_labeled, "token_in_seg_ix"] = (
+        df.loc[is_labeled].groupby(["prompt_ix", "seg_ix"], sort=False).cumcount().astype("Int64")
+    )
+
+    # ---- Final cleanup ----
+    drop_cols = [
+        "is_seg_start", "seg_id", "seg_role_token", "seg_kind",
+        "is_pure_nl", "prev_token", "next_token",
+        "is_think_open", "is_think_close",
+        "is_tcall_open", "is_tcall_close",
+        "is_tresp_open", "is_tresp_close",
+        "is_argk_open", "is_argk_close",
+        "is_argv_open", "is_argv_close",
+        "tcall_open_cum", "tcall_close_cum", "think_open_cum", "think_close_cum",
+        "tresp_open_cum", "tresp_close_cum",
+        "in_tool_call", "in_think", "in_tool_response",
+        "is_prefix", "is_role_sentinel", "is_nothink",
+        "is_tag0", "is_tag",
+    ]
+    out = df.drop(columns=drop_cols, errors="ignore")
+    out = out.sort_values(["prompt_ix", "token_ix"]).reset_index(drop=True)
+    return out
+
+
 def label_content_roles(model_architecture, sample_df):
     """
     Takes a token-level df, labels each token with its role only within the content span. Makes no assumption about the number of messages in the sequence.
@@ -564,11 +1232,11 @@ def label_content_roles(model_architecture, sample_df):
 
     dispatch = {
         "gptoss": label_gptoss_content_roles,
-        # "qwen3moe": label_qwen3_content_roles,
-        # "glm46v": label_glm4_content_roles,
+        "glm46v": label_glm4_content_roles,
         # "olmo3": label_olmo3_content_roles,
         "apriel": label_apriel_content_roles,
-        # "devstral2": label_devstral2_content_roles,
+        "devstral2": label_devstral2_content_roles,
+        "qwen3moe": label_qwen3coder_content_roles
     }
 
     if model_architecture == "devstral2":

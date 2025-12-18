@@ -34,15 +34,15 @@ def render_single_qwen3(role: str, content: str) -> str:
         return f"<|im_start|>system\n{content}<|im_end|>\n"
     elif role == 'user':
         return f"<|im_start|>user\n{content}<|im_end|>\n"
-    elif role == 'assistant-cot':
+    elif role == 'cot':
         # Reasoning-only (no visible content)
         return f"<|im_start|>assistant\n<think>\n{content}\n</think>\n<|im_end|>\n"
-    elif role == 'assistant-final':
-        # return f"<|im_start|>assistant\n{content}<|im_end|>\n"
-        return f"<|im_start|>assistant\n<think>\n\n</think>\n\n{content}<|im_end|>\n"
+    elif role == 'assistant':
+        return f"<|im_start|>assistant\n{content}<|im_end|>\n"
+        # return f"<|im_start|>assistant\n<think>\n\n</think>\n\n{content}<|im_end|>\n"
     elif role == 'tool':
         # Tool output fed back as a user message block
-        return f"<|im_start|>user\n<tool_response>\n{content}\n</tool_response><|im_end|>\n"
+        return f"<|im_start|>user\n<tool_response>\n{content}\n</tool_response>\n<|im_end|>\n"
     else:
         raise ValueError("Invalid role!")
 
@@ -65,10 +65,10 @@ def render_single_olmo3(role: str, content: str) -> str:
         return f"<|im_start|>system\n{content}<|im_end|>\n"
     elif role == 'user':
         return f"<|im_start|>user\n{content}<|im_end|>\n"
-    elif role == 'assistant-cot':
+    elif role == 'cot':
         return f"<|im_start|>assistant\n<think>{content}</think><|im_end|>\n"
-    elif role == 'assistant-final':
-        return f"<|im_start|>assistant\n<think></think>{content}<|im_end|>\n"
+    elif role == 'assistant':
+        return f"<|im_start|>assistant\n{content}<|im_end|>\n"
         # return f"<|im_start|>assistant\n{content}<|im_end|>\n" ## OR try this - no think at all (instruct variant)
     elif role == 'tool': # Tool output / environment feedback Olmo-3 uses the `environment` role for this.
         return f"<|im_start|>environment\n{content}<|im_end|>\n"
@@ -81,16 +81,16 @@ def render_single_glm4(role: str, content: str) -> str:
 
     Notes:
       - Does NOT include the global '[gMASK]<sop>' prefix (add once per full prompt).
-      - 'assistant-cot' emits only a <think> block; 'assistant-final' emits an empty think + visible content.
+      - 'cot' emits only a <think> block; 'assistant' emits an empty think + visible content.
       - Tool OUTPUT is wrapped as an observation + <tool_response> block.
     """
     if role == 'system':
         return f"<|system|>\n{content}"
     elif role == 'user':
         return f"<|user|>\n{content}"
-    elif role == 'assistant-cot':
+    elif role == 'cot':
         return f"<|assistant|>\n<think>{content}</think>\n"
-    elif role == 'assistant-final':
+    elif role == 'assistant':
         return f"<|assistant|>\n<think></think>\n{content}"
     elif role == 'tool':
         # Tool OUTPUT (results). GLM-4.6 groups consecutive tool responses under <|observation|>.
@@ -113,6 +113,22 @@ def render_single_apriel(role, content):
         return f"<|begin_assistant|>\n[BEGIN FINAL RESPONSE]\n{content}\n<|end|>"
     elif role == 'tool':
         return f"<|begin_tool_result|>\n{content}\n\n\n"
+    
+def render_single_devstral2(role, content):
+    """
+    Render for Devstral format
+    """
+    if role == 'system':
+        return f"[SYSTEM_PROMPT]{content}[/SYSTEM_PROMPT]"
+    elif role == 'user':
+        return f"[INST]{content}[/INST]"
+    elif role == 'assistant':
+        return f"{content}"
+    elif role == 'tool':
+        return f"[TOOL_RESULTS]{content}[/TOOL_RESULTS]"
+    else:
+        raise ValueError("Invalid role!")
+
 
 def render_single_message(model_architecture, role, content, tool_name = None) -> str:
     """
@@ -138,12 +154,14 @@ def render_single_message(model_architecture, role, content, tool_name = None) -
         res = render_single_gptoss(role, content, tool_name = tool_name)
     elif model_architecture == 'qwen3moe':
         res = render_single_qwen3(role, content)
-    elif model_architecture in ['glm4vmoe','glm46v']:
+    elif model_architecture == 'glm46v':
         res = render_single_glm4(role, content)
     elif model_architecture == 'olmo3':
         res = render_single_olmo3(role, content)
     elif model_architecture == 'apriel':
         res = render_single_apriel(role, content)
+    elif model_architecture == 'mistral3':
+        res = render_single_devstral2(role, content)
     else:
         raise ValueError("Invalid model!")
 
@@ -172,6 +190,8 @@ def render_mixed_cot(model_architecture, cot, assistant) -> str:
         return f"<|im_start|>assistant\n<think>{cot}</think>{assistant}<|im_end|>\n"
     elif model_architecture == 'apriel':
         return f"<|begin_assistant|>\nHere are my reasoning steps:\n{cot}\n[BEGIN FINAL RESPONSE]\n{assistant}\n<|end|>\n"
+    elif model_architecture == 'devstral2':
+        return f"{assistant}"
 
     else:
         raise ValueError("Invalid model!")
@@ -189,7 +209,6 @@ def load_chat_template(parent_dir, model_architecture) -> str:
             (1) prevents old <think></think> tags from being stripped.
         - For GLM4, this does not; it's just the standard chat template.
             (1) removes the [gMASK]<sop> prefix (add it back yourself)
-            (2) 
         - For GPT-OSS, this:
             (1) removes the default system prompt;
             (2) has {"role": "system", "content", "..."} propagate to the system prompt instead of the developer prompt;
@@ -199,7 +218,7 @@ def load_chat_template(parent_dir, model_architecture) -> str:
         instruct_format = 'gptoss'
     elif model_architecture == 'qwen3moe':
         instruct_format = 'qwen3'
-    elif model_architecture in ['glm4vmoe', 'glm46v']:
+    elif model_architecture == 'glm46v':
         instruct_format = 'glm4'
     elif model_architecture == 'olmo3':
         instruct_format = 'olmo3'
