@@ -37,16 +37,6 @@ def label_gptoss_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     # Header tokens: tokens in [<|start|>, <|message|>) excluding <|start|>.
     d["is_header_tok"] = (d["msg_seg_id"] > 0) & (~d["after_msg"]) & (d["token"] != "<|start|>")
 
-    def _has_channel(toks_lc, channel: str) -> bool:
-        # Support either "<|channel|>analysis" as one token OR "<|channel|>", "analysis" as two tokens.
-        combined = f"<|channel|>{channel}"
-        if combined in toks_lc:
-            return True
-        for i in range(len(toks_lc) - 1):
-            if toks_lc[i] == "<|channel|>" and toks_lc[i + 1] == channel:
-                return True
-        return False
-
     def classify_header(tok_series: pd.Series):
         toks = tok_series.tolist()
         if not toks:
@@ -529,15 +519,15 @@ def label_olmo3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     """
     Label OLMo3-7B (Think + Instruct) token streams with content-only roles.
 
-        Description:
+    Description:
         - ChatML framing: <|im_start|>role\\n ... (<|im_end|> or <|endoftext|>).
         - <functions>...</functions> and <function_calls>...</function_calls> are single tokens.
         - <think> / </think> are NOT single tokens; we detect them by substring scanning over the
-          concatenated assistant segment text. A dangling "<think>" (no close) marks cot until
-          the segment ends (supports olmo3-7b-think generation prompt).
+            concatenated assistant segment text. A dangling "<think>" (no close) marks cot until
+            the segment ends (supports olmo3-7b-think generation prompt).
         - Pure newline tokens immediately before <functions> in user/system segments and pure newline
-          tokens immediately after </think> (until first non-newline token) are treated as structural
-          (non-content). Newlines inside think content are preserved as cot content.
+            tokens immediately after </think> (until first non-newline token) are treated as structural
+            (non-content). Newlines inside think content are preserved as cot content.
 
     Returns:
         - role: one of {system, user, assistant, cot, tool_call, tool} or None
@@ -678,8 +668,8 @@ def label_olmo3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     df["is_fcalls_close"] = is_assistant_seg & df["token"].eq(CLOSE_FCALLS)
 
     # in_function_calls (assistant-only)
-    df["fcalls_open_cum"] = by_seg["is_fcalls_open"].cumsum()
-    df["fcalls_close_cum"] = by_seg["is_fcalls_close"].cumsum()
+    df["fcalls_open_cum"]  = df.groupby(["prompt_ix", "seg_id"], sort=False)["is_fcalls_open"].cumsum()
+    df["fcalls_close_cum"] = df.groupby(["prompt_ix", "seg_id"], sort=False)["is_fcalls_close"].cumsum()
     df["in_function_calls"] = df["fcalls_open_cum"] > df["fcalls_close_cum"]
 
     # ---- Structural newline before <functions> (template-inserted in user when functions appended) ----
@@ -1535,7 +1525,7 @@ def label_content_roles(model_prefix, sample_df):
         'gptoss120': label_gptoss_content_roles,
         'olmo3-7i': label_olmo3_content_roles,
         'glm-46v-flash': label_glm4_content_roles,
-        'apriel': label_apriel_content_roles,
+        'apriel-16': label_apriel_content_roles,
         'qwen3coder': label_qwen3coder_content_roles
     }
 

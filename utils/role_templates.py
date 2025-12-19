@@ -35,13 +35,29 @@ def render_single_qwen3(role: str, content: str) -> str:
     elif role == 'user':
         return f"<|im_start|>user\n{content}<|im_end|>\n"
     elif role == 'cot':
-        # Reasoning-only (no visible content)
         return f"<|im_start|>assistant\n<think>\n{content}\n</think>\n<|im_end|>\n"
     elif role == 'assistant':
         return f"<|im_start|>assistant\n{content}<|im_end|>\n"
         # return f"<|im_start|>assistant\n<think>\n\n</think>\n\n{content}<|im_end|>\n"
     elif role == 'tool':
         # Tool output fed back as a user message block
+        return f"<|im_start|>user\n<tool_response>\n{content}\n</tool_response>\n<|im_end|>\n"
+    else:
+        raise ValueError("Invalid role!")
+    
+def render_single_nemotron3(role: str, content: str) -> str:
+    """
+    Wrap arbitrary text as a single Nemotron3 message
+    """
+    if role == 'system':
+        return f"<|im_start|>system\n{content}<|im_end|>\n"
+    elif role == 'user':
+        return f"<|im_start|>user\n{content}<|im_end|>\n"
+    elif role == 'cot':
+        return f"<|im_start|>assistant\n<think>{content}</think><|im_end|>\n"
+    elif role == 'assistant':
+        return f"<|im_start|>assistant\n<think></think>{content}<|im_end|>\n"
+    elif role == 'tool':
         return f"<|im_start|>user\n<tool_response>\n{content}\n</tool_response>\n<|im_end|>\n"
     else:
         raise ValueError("Invalid role!")
@@ -69,8 +85,7 @@ def render_single_olmo3(role: str, content: str) -> str:
         return f"<|im_start|>assistant\n<think>{content}</think><|im_end|>\n"
     elif role == 'assistant':
         return f"<|im_start|>assistant\n{content}<|im_end|>\n"
-        # return f"<|im_start|>assistant\n{content}<|im_end|>\n" ## OR try this - no think at all (instruct variant)
-    elif role == 'tool': # Tool output / environment feedback Olmo-3 uses the `environment` role for this.
+    elif role == 'tool':
         return f"<|im_start|>environment\n{content}<|im_end|>\n"
     else:
         raise ValueError("Invalid role!")
@@ -133,12 +148,14 @@ def render_single_message(model_prefix, role, content, tool_name = None) -> str:
     """
     if model_prefix in ['gptoss20', 'gptoss120']:
         res = render_single_gptoss(role, content, tool_name = tool_name)
-    elif model_prefix in ['qwen3coder']:
-        res = render_single_qwen3(role, content)
-    elif model_prefix in ['glm-46v-flash']:
-        res = render_single_glm4(role, content)
     elif model_prefix in ['olmo3-7i']:
         res = render_single_olmo3(role, content)
+    elif model_prefix in ['glm-46v-flash']:
+        res = render_single_glm4(role, content)
+    elif model_prefix in ['nemotron3nano']:
+        res = render_single_nemotron3(role, content)
+    elif model_prefix in ['qwen3coder']:
+        res = render_single_qwen3(role, content)
     elif model_prefix in ['apriel-16']:
         res = render_single_apriel(role, content)
     else:
@@ -148,7 +165,7 @@ def render_single_message(model_prefix, role, content, tool_name = None) -> str:
 
 def render_mixed_cot(model_prefix, cot, assistant) -> str:
     """
-    Renders a mixed cot + assistant message
+    Renders a mixed cot + assistant message. Only valid for reasoning models.
 
     Params:
         @model_architecture: One of several suppored model types, includes.
@@ -160,12 +177,14 @@ def render_mixed_cot(model_prefix, cot, assistant) -> str:
     """
     if model_prefix in ['gptoss20', 'gptoss120']:
         return f"<|start|>assistant<|channel|>analysis<|message|>{cot}<|end|><|start|>assistant<|channel|>final<|message|>{assistant}<|end|>"
-    elif model_prefix in ['qwen3coder']:
-        return f"<|im_start|>assistant\n<think>\n{cot}\n</think>\n\n{assistant}<|im_end|>\n"
-    elif model_prefix in ['glm-46v-flash']:
-        return f"<|assistant|>\n<think>{cot}</think>\n{assistant}"
     elif model_prefix in ['olmo3-7i']:
         return f"<|im_start|>assistant\n<think>{cot}</think>{assistant}<|im_end|>\n"
+    elif model_prefix in ['glm-46v-flash']:
+        return f"<|assistant|>\n<think>{cot}</think>\n{assistant}"
+    elif model_prefix in ['glm-46v-flash']:
+        return f"<|assistant|>\n<think>{cot}</think>\n{assistant}"
+    elif model_prefix in ['qwen3coder']:
+        return f"<|im_start|>assistant\n<think>\n{cot}\n</think>\n\n{assistant}<|im_end|>\n"
     elif model_prefix in ['apriel-16']:
         return f"<|begin_assistant|>\nHere are my reasoning steps:\n{cot}\n[BEGIN FINAL RESPONSE]\n{assistant}\n<|end|>\n"
     else:
@@ -199,14 +218,15 @@ def load_chat_template(parent_dir, model_prefix) -> str:
     """
     if model_prefix in ['gptoss20', 'gptoss120']:
         instruct_format = 'gptoss'
-    elif model_prefix in ['qwen3coder']:
-        instruct_format = 'qwen3'
-    elif model_prefix in ['glm-46v-flash']:
-        instruct_format = 'glm4'
     elif model_prefix in ['olmo3-7i']:
         instruct_format = 'olmo3'
+    elif model_prefix in ['glm-46v-flash']:
+        instruct_format = 'glm4'
+
     elif model_prefix in ['apriel-16']:
         instruct_format = 'apriel'
+    elif model_prefix in ['qwen3coder']:
+        instruct_format = 'qwen3'
     else:
         raise ValueError(f"Model prefix {model_prefix} not supported")
 
