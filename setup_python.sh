@@ -60,8 +60,8 @@ uv pip install --python "$VENV_DIR/bin/python" --index-url https://download.pyto
 
 uv pip install --python "$VENV_DIR/bin/python" \
   transformers==4.57.3 hf_transfer==0.1.9 accelerate==1.12.0 triton==3.5.1 \
-  tiktoken==0.12.0 blobfile==3.1.0 kernels==0.11.2 \
-  compressed-tensors==0.12.2 \
+  tiktoken==0.12.0 blobfile==3.1.0 kernels==0.11.5 \
+  compressed-tensors==0.13.0 \
   plotly pandas kaleido python-dotenv pyyaml tqdm termcolor \
   datasets
 
