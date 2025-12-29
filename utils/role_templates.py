@@ -25,8 +25,8 @@ def render_single_qwen3(role: str, content: str) -> str:
     """
     Wrap arbitrary text as a single Qwen3Moe message.
     Notes:
-      - 'assistant-cot' is rendered as an assistant message with a <think>...</think> block only.
-      - 'assistant-final' is rendered as an assistant message with visible content only.
+      - 'cot' is rendered as an assistant message with a <think>...</think> block only.
+      - 'assistant' is rendered as an assistant message with visible content only.
       - 'tool' represents TOOL OUTPUT, which Qwen3 wraps as a user turn containing a <tool_response>...</tool_response> block.
         (The tool name is not used here; function *calls* are emitted from assistant messages via <tool_call>...</tool_call>.)
     """
@@ -35,13 +35,13 @@ def render_single_qwen3(role: str, content: str) -> str:
     elif role == 'user':
         return f"<|im_start|>user\n{content}<|im_end|>\n"
     elif role == 'cot':
-        return f"<|im_start|>assistant\n<think>\n{content}\n</think>\n<|im_end|>\n"
+        return f"<|im_start|>assistant\n<think>\n{content}\n</think>\n\n<|im_end|>\n"
     elif role == 'assistant':
         return f"<|im_start|>assistant\n{content}<|im_end|>\n"
         # return f"<|im_start|>assistant\n<think>\n\n</think>\n\n{content}<|im_end|>\n"
     elif role == 'tool':
         # Tool output fed back as a user message block
-        return f"<|im_start|>user\n<tool_response>\n{content}\n</tool_response>\n<|im_end|>\n"
+        return f"<|im_start|>user\n<tool_response>\n{content}\n</tool_response><|im_end|>\n"
     else:
         raise ValueError("Invalid role!")
     
@@ -129,6 +129,19 @@ def render_single_apriel(role, content):
     elif role == 'tool':
         return f"<|begin_tool_result|>\n{content}\n\n\n"
 
+def render_single_rnj1(role, content):
+    """
+    Render for RNJ-1 format
+    """
+    if role == 'system':
+        return f"<|start_header_id|>system<|end_header_id|>\n{content}<|eot_id|>"
+    elif role == 'user':
+        return f"<|start_header_id|>user<|end_header_id|>\n{content}<|eot_id|>"
+    elif role == 'assistant':
+        return f"<|start_header_id|>assistant<|end_header_id|>\n{content}<|eot_id|>"
+    elif role == 'tool':
+        return f"<|start_header_id|>user<|end_header_id|>\n<tool_response>\n{content}\n</tool_response><|eot_id|>"
+
 def render_single_message(model_prefix, role, content, tool_name = None) -> str:
     """
     Params:
@@ -148,16 +161,19 @@ def render_single_message(model_prefix, role, content, tool_name = None) -> str:
     """
     if model_prefix in ['gptoss20', 'gptoss120']:
         res = render_single_gptoss(role, content, tool_name = tool_name)
-    elif model_prefix in ['olmo3-7i']:
+    elif model_prefix in ['olmo3-7i', 'olmo3-7t']:
         res = render_single_olmo3(role, content)
     elif model_prefix in ['glm-46v-flash']:
         res = render_single_glm4(role, content)
+    elif model_prefix in ['rnj1']:
+        res = render_single_rnj1(role, content)
     elif model_prefix in ['nemotron3nano']:
         res = render_single_nemotron3(role, content)
     elif model_prefix in ['qwen3coder']:
         res = render_single_qwen3(role, content)
     elif model_prefix in ['apriel-16']:
         res = render_single_apriel(role, content)
+
     else:
         raise ValueError("Invalid model!")
 
@@ -177,13 +193,13 @@ def render_mixed_cot(model_prefix, cot, assistant) -> str:
     """
     if model_prefix in ['gptoss20', 'gptoss120']:
         return f"<|start|>assistant<|channel|>analysis<|message|>{cot}<|end|><|start|>assistant<|channel|>final<|message|>{assistant}<|end|>"
-    elif model_prefix in ['olmo3-7i']:
+    elif model_prefix in ['olmo3-7i', 'olmo3-7t']:
         return f"<|im_start|>assistant\n<think>{cot}</think>{assistant}<|im_end|>\n"
     elif model_prefix in ['glm-46v-flash']:
         return f"<|assistant|>\n<think>{cot}</think>\n{assistant}"
-    elif model_prefix in ['glm-46v-flash']:
-        return f"<|assistant|>\n<think>{cot}</think>\n{assistant}"
-    elif model_prefix in ['qwen3coder']:
+    elif model_prefix in ['nemotron3nano']:
+        return f"<|assistant|>\n<think>\n{cot}</think>\n{assistant}"
+    elif model_prefix in ['qwen3coder', 'qwen3next']:
         return f"<|im_start|>assistant\n<think>\n{cot}\n</think>\n\n{assistant}<|im_end|>\n"
     elif model_prefix in ['apriel-16']:
         return f"<|begin_assistant|>\nHere are my reasoning steps:\n{cot}\n[BEGIN FINAL RESPONSE]\n{assistant}\n<|end|>\n"
@@ -218,14 +234,16 @@ def load_chat_template(parent_dir, model_prefix) -> str:
     """
     if model_prefix in ['gptoss20', 'gptoss120']:
         instruct_format = 'gptoss'
-    elif model_prefix in ['olmo3-7i']:
+    elif model_prefix in ['olmo3-7i', 'olmo3-7t']:
         instruct_format = 'olmo3'
     elif model_prefix in ['glm-46v-flash']:
         instruct_format = 'glm4'
+    elif model_prefix in ['nemotron3nano']:
+        instruct_format = 'nemotron'
 
     elif model_prefix in ['apriel-16']:
         instruct_format = 'apriel'
-    elif model_prefix in ['qwen3coder']:
+    elif model_prefix in ['qwen3next', 'qwen3coder']:
         instruct_format = 'qwen3'
     else:
         raise ValueError(f"Model prefix {model_prefix} not supported")

@@ -8,7 +8,6 @@ import contextlib
 import torch
 import torch.nn.functional as F
 
-
 def _nemotronh_router_forward(router, hidden_states_2d: torch.Tensor):
     """
     Replicates NemotronHTopkRouter.forward, but also returns router_logits.
@@ -77,7 +76,7 @@ def _nemotronh_moe_forward_with_topk(moe_module, hidden_states_3d: torch.Tensor)
 
 
 @torch.no_grad()
-def run_nemotronh_return_topk(
+def run_nemotron3_return_topk(
     model,
     input_ids: torch.Tensor,
     attention_mask: torch.Tensor = None,

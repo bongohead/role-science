@@ -4,7 +4,7 @@ Reversed engineered forward pass for Qwen
 - See https://github.com/huggingface/transformers/blob/main/src/transformers/models/qwen3_moe/modeling_qwen3_moe.py
 """
 import torch
-from transformers.masking_utils import create_causal_mask, create_sliding_window_causal_mask
+from transformers.masking_utils import create_causal_mask
 from ._pretrained_helpers import _sort_gate_tensors
 
 @torch.no_grad()
@@ -31,15 +31,7 @@ def run_qwen3moe_return_topk(model, input_ids, attention_mask, return_hidden_sta
 
     cache_position = torch.arange(0, N, device = input_embeds.device)
     position_ids = cache_position.unsqueeze(0)
-    mask_function = create_causal_mask if model.config.sliding_window is None else create_sliding_window_causal_mask
-    causal_mask = mask_function(
-        config = model.config,
-        input_embeds = input_embeds,
-        attention_mask = attention_mask,
-        cache_position = cache_position,
-        past_key_values = None,
-        position_ids = position_ids,
-    )
+    causal_mask = create_causal_mask(model.model.config, input_embeds, attention_mask, cache_position, None, position_ids) # Assm no sliding window.
     position_embeddings = model.model.rotary_emb(input_embeds, position_ids)
 
     hidden_state = input_embeds

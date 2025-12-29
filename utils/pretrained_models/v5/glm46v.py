@@ -59,7 +59,7 @@ def run_glm46v_return_topk(model, input_ids, attention_mask, pixel_values = None
         video_embeds_list = base_model.get_video_features(pixel_values_videos, video_grid_thw)
         video_embeds = torch.cat(video_embeds_list, dim=0).to(device = model.device, dtype = input_embeds.dtype)
 
-        _, video_mask = base_model.get_placeholder_mask(input_ids = input_ids, inputs_embeds = input_embeds, video_features = video_embeds)
+        _, video_mask = base_model.get_placeholder_mask(input_ids = input_ids, input_embeds = input_embeds, video_features = video_embeds)
         input_embeds = input_embeds.masked_scatter(video_mask, video_embeds)
 
 

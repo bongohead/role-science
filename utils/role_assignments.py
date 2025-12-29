@@ -1491,6 +1491,414 @@ def label_glm4_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def label_rnj1_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Label EssentialAI/rnj-1-instruct token streams with content-only roles.
+
+    Returns:
+        - role: one of {system, user, assistant, tool_call, tool} or None
+        - is_content: bool
+        - seg_ix: Int64 or NA (contiguous runs of labeled content tokens with same role, per prompt)
+        - token_in_seg_ix: Int64 or NA (0-based index within seg_ix)
+
+    Description:
+        - Message framing is Llama-3 style: <|start_header_id|>{role}<|end_header_id|>\\n ... <|eot_id|>.
+        - Header tokens (start/end header tokens, the role text between them, and the immediate pure-newline
+          token(s) after <|end_header_id|>) are structural => role=None, is_content=False.
+        - <tool_call>...</tool_call> blocks are treated as tool_call ONLY inside assistant messages.
+          (The system tools preamble contains a literal <tool_call> example; that stays system content.)
+        - Tool outputs are wrapped as synthetic user messages containing <tool_response>...</tool_response>.
+          We only activate tool_response parsing for a user message whose body begins with <tool_response>.
+        - Structural newlines: only newline-only tokens that are deterministically paired with tags/wrappers
+          (header newline, newline right after wrapper open, newline right before wrapper close, and newline
+          right before non-first wrapper open) are stripped as non-content.
+    """
+    required = {"prompt_ix", "token_ix", "token"}
+    missing = required - set(sample_df.columns)
+    if missing:
+        raise ValueError(f"sample_df missing required columns: {sorted(missing)}")
+
+    # ---- Llama-3 style header tokens (present in the provided template) ----
+    START_HDR = "<|start_header_id|>"
+    END_HDR = "<|end_header_id|>"
+    EOT = "<|eot_id|>"
+
+    # Common BOS/EOS miscellania for this family (don’t assign a role)
+    BOS_TOKENS = {"<|begin_of_text|>", "<s>"}
+    EOS_TOKENS = {"<|end_of_text|>", "</s>"}
+
+    # Inner wrappers (may be split across multiple tokens)
+    TOOL_CALL_OPEN, TOOL_CALL_CLOSE = "<tool_call>", "</tool_call>"
+    TOOL_RESP_OPEN, TOOL_RESP_CLOSE = "<tool_response>", "</tool_response>"
+
+    # Newline-only token detector (covers common newline glyphs too)
+    NL_ONLY_RE = re.compile(r"^[\nĊĉĈ]+$")
+
+    def _span_masks_with_occurrences(tokens: list[str], open_str: str, close_str: str):
+        """
+        Find open/close occurrences via substring search over concatenated tokens.
+
+        Returns:
+            - in_block: bool[n] tokens overlapping the interior (open_end, close_start) (or to end if dangling)
+            - tag_mask: bool[n] tokens overlapping any open/close tag substring
+            - open_occs: list of (char_s, char_e, tok_s, tok_e) for each open match (sorted)
+            - close_occs: list of (char_s, char_e, tok_s, tok_e) for each close match (sorted)
+            - pairs: list of (open_occ, close_occ_or_None) in encounter order (stack pairing)
+        """
+        n = len(tokens)
+        if n == 0:
+            z = np.zeros(0, dtype=bool)
+            return z, z, [], [], []
+
+        text = "".join(tokens)
+
+        lengths = np.fromiter((len(t) for t in tokens), dtype=int, count=n)
+        starts = np.zeros(n, dtype=int)
+        if n > 1:
+            starts[1:] = np.cumsum(lengths)[:-1]
+        ends = starts + lengths
+
+        def _tok_span(cs: int, ce: int) -> tuple[int, int]:
+            # tokens overlapping [cs, ce)
+            tok_s = int(np.searchsorted(ends, cs, side="right"))
+            tok_e = int(np.searchsorted(starts, ce, side="left") - 1)
+            tok_s = max(0, min(tok_s, n))
+            tok_e = max(-1, min(tok_e, n - 1))
+            return tok_s, tok_e
+
+        open_occs = []
+        for m in re.finditer(re.escape(open_str), text):
+            cs, ce = m.span()
+            ts, te = _tok_span(cs, ce)
+            if ts <= te:
+                open_occs.append((cs, ce, ts, te))
+
+        close_occs = []
+        for m in re.finditer(re.escape(close_str), text):
+            cs, ce = m.span()
+            ts, te = _tok_span(cs, ce)
+            if ts <= te:
+                close_occs.append((cs, ce, ts, te))
+
+        open_occs.sort(key=lambda x: x[0])
+        close_occs.sort(key=lambda x: x[0])
+
+        # Pair opens/closes with a stack (handles nesting/dangling)
+        events = [(o[0], "open", o) for o in open_occs] + [(c[0], "close", c) for c in close_occs]
+        events.sort(key=lambda x: (x[0], 0 if x[1] == "open" else 1))
+
+        stack = []
+        pairs: list[tuple[tuple[int, int, int, int], tuple[int, int, int, int] | None]] = []
+        for _, typ, occ in events:
+            if typ == "open":
+                stack.append(occ)
+            else:
+                if stack:
+                    o = stack.pop()
+                    pairs.append((o, occ))
+                # unmatched closes are ignored
+
+        # dangling opens => extend to end
+        for o in stack:
+            pairs.append((o, None))
+
+        # tag mask: any token overlapping any open/close tag substring
+        tag_mask = np.zeros(n, dtype=bool)
+        for _, _, ts, te in open_occs:
+            tag_mask[ts : te + 1] = True
+        for _, _, ts, te in close_occs:
+            tag_mask[ts : te + 1] = True
+
+        # in_block: interior ranges for each pair
+        in_block = np.zeros(n, dtype=bool)
+        for o, c in pairs:
+            o_cs, o_ce, _, _ = o
+            if c is None:
+                a, b = o_ce, len(text)
+            else:
+                c_cs, _, _, _ = c
+                a, b = o_ce, c_cs
+            if b <= a:
+                continue
+            in_block |= (ends > a) & (starts < b)
+
+        in_block &= ~tag_mask
+        return in_block, tag_mask, open_occs, close_occs, pairs
+
+    def _wrapper_ws_mask(
+        n: int,
+        is_pure_nl: np.ndarray,
+        tag_mask: np.ndarray,
+        open_occs: list[tuple[int, int, int, int]],
+        close_occs: list[tuple[int, int, int, int]],
+        *,
+        strip_pre_open_for_nonfirst: bool,
+    ) -> np.ndarray:
+        """
+        Structural newline-only tokens paired with wrappers:
+          - after each open: token immediately after open-tag token-range
+          - before each close: token immediately before close-tag token-range
+          - before non-first opens: token immediately before open-tag token-range (only if non-first)
+        """
+        ws = np.zeros(n, dtype=bool)
+
+        # open occurrences in order
+        for j, (_, _, tok_s, tok_e) in enumerate(open_occs):
+            # after open
+            idx = tok_e + 1
+            if 0 <= idx < n and is_pure_nl[idx] and (not tag_mask[idx]):
+                ws[idx] = True
+
+            # before open (only non-first, to avoid nuking assistant/body trailing newline before the first call)
+            if strip_pre_open_for_nonfirst and j > 0:
+                idx2 = tok_s - 1
+                if 0 <= idx2 < n and is_pure_nl[idx2] and (not tag_mask[idx2]):
+                    ws[idx2] = True
+
+        # before close occurrences
+        for _, _, tok_s, _ in close_occs:
+            idx = tok_s - 1
+            if 0 <= idx < n and is_pure_nl[idx] and (not tag_mask[idx]):
+                ws[idx] = True
+
+        return ws
+
+    d = (
+        sample_df
+        .sort_values(["prompt_ix", "token_ix"])
+        .reset_index(drop=True)
+        .copy()
+    )
+
+    # ---- Message segmentation (by <|start_header_id|>) ----
+    d["msg_id"] = d.groupby("prompt_ix", sort=False)["token"].transform(lambda s: (s == START_HDR).cumsum())
+    by_msg = d.groupby(["prompt_ix", "msg_id"], sort=False)
+
+    # ---- Basic token classes ----
+    d["is_start_hdr"] = d["token"].eq(START_HDR)
+    d["is_end_hdr"] = d["token"].eq(END_HDR)
+    d["is_eot"] = d["token"].eq(EOT)
+
+    d["is_bos"] = d["token"].isin(BOS_TOKENS)
+    d["is_eos"] = d["token"].isin(EOS_TOKENS)
+
+    d["is_pure_nl"] = d["token"].astype(str).str.fullmatch(NL_ONLY_RE, na=False)
+
+    # ---- Close sentinel for a message span ----
+    d["is_close"] = d["is_eot"] | d["is_eos"]
+    d["before_end"] = by_msg["is_close"].cumsum().eq(0)
+
+    # ---- Header role text (tokens between start_hdr and end_hdr) ----
+    d["end_hdr_seen"] = by_msg["is_end_hdr"].cumsum()
+
+    d["is_role_tok"] = (
+        (d["msg_id"] > 0)
+        & (d["end_hdr_seen"].eq(0))
+        & ~d["is_start_hdr"]
+        & ~d["is_end_hdr"]
+    )
+
+    d["role_line"] = (
+        d["token"].where(d["is_role_tok"], "")
+        .groupby([d["prompt_ix"], d["msg_id"]], sort=False)
+        .transform("sum")
+        .fillna("")
+        .str.strip()
+        .str.lower()
+    )
+
+    # We only recognize these explicitly (no defaulting)
+    d["seg_kind"] = np.select(
+        [
+            d["role_line"].eq("system"),
+            d["role_line"].eq("user"),
+            d["role_line"].eq("assistant"),
+        ],
+        ["system", "user", "assistant"],
+        default=None,
+    )
+
+    # ---- Header newline(s) immediately after <|end_header_id|> (pure-NL only) ----
+    d["after_end_hdr"] = d["end_hdr_seen"].gt(0) & ~d["is_end_hdr"]
+
+    d["non_nl_after_end_hdr"] = d["after_end_hdr"] & ~d["is_pure_nl"]
+    d["seen_non_nl_after_end_hdr"] = by_msg["non_nl_after_end_hdr"].cumsum().gt(0)
+
+    d["is_header_nl"] = d["after_end_hdr"] & d["is_pure_nl"] & ~d["seen_non_nl_after_end_hdr"]
+
+    # ---- Header structural tokens ----
+    d["is_header_struct"] = (
+        (d["msg_id"] > 0)
+        & (
+            d["is_start_hdr"]
+            | d["is_end_hdr"]
+            | d["is_role_tok"]
+            | d["is_header_nl"]
+        )
+    )
+
+    # ---- Base body region (inside a message, after header, before first close) ----
+    d["in_body"] = (d["msg_id"] > 0) & d["before_end"] & ~d["is_header_struct"]
+
+    # ---- Wrapper detection (per message) ----
+    # init
+    d["tool_wrapper_user"] = False
+
+    d["in_tool_call"] = False
+    d["tool_call_tag"] = False
+    d["ws_tool_call"] = False
+
+    d["in_tool_resp"] = False
+    d["tool_resp_tag"] = False
+    d["ws_tool_resp"] = False
+
+    def _mark_wrappers(group: pd.DataFrame) -> pd.DataFrame:
+        kind = group["seg_kind"].iloc[0] if len(group) else None
+        if kind is None:
+            return group
+
+        tokens = group["token"].astype(str).tolist()
+        is_pure_nl = group["is_pure_nl"].to_numpy()
+
+        # Assistant: mark <tool_call> blocks
+        if kind == "assistant":
+            in_blk, tag_mask, open_occs, close_occs, _ = _span_masks_with_occurrences(
+                tokens, TOOL_CALL_OPEN, TOOL_CALL_CLOSE
+            )
+            ws_mask = _wrapper_ws_mask(
+                n=len(tokens),
+                is_pure_nl=is_pure_nl,
+                tag_mask=tag_mask,
+                open_occs=open_occs,
+                close_occs=close_occs,
+                strip_pre_open_for_nonfirst=True,  # only non-first opens
+            )
+            group["in_tool_call"] = in_blk
+            group["tool_call_tag"] = tag_mask
+            group["ws_tool_call"] = ws_mask
+            return group
+
+        # User: activate tool_response parsing ONLY if body begins with <tool_response>
+        if kind == "user":
+            # first non-newline token in body
+            body_mask = group["in_body"].to_numpy()
+            cand = np.where(body_mask & ~is_pure_nl)[0]
+            if cand.size == 0:
+                group["tool_wrapper_user"] = False
+                return group
+
+            start_i = int(cand[0])
+            # build a short prefix to test start-of-body
+            prefix = "".join(tokens[start_i : min(len(tokens), start_i + 20)])
+            tool_wrapper = prefix.startswith(TOOL_RESP_OPEN)
+            group["tool_wrapper_user"] = tool_wrapper
+
+            if not tool_wrapper:
+                return group
+
+            in_blk, tag_mask, open_occs, close_occs, _ = _span_masks_with_occurrences(
+                tokens, TOOL_RESP_OPEN, TOOL_RESP_CLOSE
+            )
+            ws_mask = _wrapper_ws_mask(
+                n=len(tokens),
+                is_pure_nl=is_pure_nl,
+                tag_mask=tag_mask,
+                open_occs=open_occs,
+                close_occs=close_occs,
+                strip_pre_open_for_nonfirst=True,  # between multiple tool responses
+            )
+            group["in_tool_resp"] = in_blk
+            group["tool_resp_tag"] = tag_mask
+            group["ws_tool_resp"] = ws_mask
+            return group
+
+        # System: do nothing (system preamble contains literal <tool_call> example text)
+        return group
+
+    d = (
+        d.groupby(["prompt_ix", "msg_id"], sort=False, group_keys=False)
+         .apply(_mark_wrappers)
+    )
+
+    # ---- Final tag mask ----
+    # miscellania + headers + message closes + active wrapper tags + wrapper-paired newline-only tokens
+    d["is_tag"] = (
+        d["is_bos"] | d["is_eos"]
+        | d["is_header_struct"]
+        | d["is_close"]
+        | (d["tool_call_tag"] | d["ws_tool_call"])
+        | (d["tool_resp_tag"] | d["ws_tool_resp"])
+    )
+
+    # ---- is_content: semantic content tokens inside message spans ----
+    d["is_content"] = d["in_body"] & ~d["is_tag"]
+
+    # ---- role assignment (content-only; no defaulting) ----
+    role = np.array([None] * len(d), dtype=object)
+
+    is_content = d["is_content"].to_numpy()
+
+    is_system = (d["seg_kind"] == "system").to_numpy()
+    is_user = (d["seg_kind"] == "user").to_numpy()
+    is_asst = (d["seg_kind"] == "assistant").to_numpy()
+
+    in_tool_call = d["in_tool_call"].to_numpy()
+    in_tool_resp = d["in_tool_resp"].to_numpy()
+    tool_wrapper_user = d["tool_wrapper_user"].to_numpy()
+
+    role[is_content & is_system] = "system"
+
+    # user: tool blocks become tool, everything else is user
+    user_content = is_content & is_user
+    role[user_content & tool_wrapper_user & in_tool_resp] = "tool"
+    role[user_content & ~(tool_wrapper_user & in_tool_resp)] = "user"
+
+    # assistant: tool_call blocks become tool_call, everything else is assistant
+    asst_content = is_content & is_asst
+    role[asst_content & in_tool_call] = "tool_call"
+    role[asst_content & ~in_tool_call] = "assistant"
+
+    d["role"] = role
+
+    # ---- seg_ix + token_in_seg_ix (only for labeled tokens) ----
+    labeled = d["role"].notna()
+
+    prev_labeled = labeled.groupby(d["prompt_ix"], sort=False).shift(1, fill_value=False)
+    prev_role = d.groupby("prompt_ix", sort=False)["role"].shift(1)
+
+    is_new_seg = labeled & (~prev_labeled | (d["role"] != prev_role))
+    seg_counter = is_new_seg.groupby(d["prompt_ix"], sort=False).cumsum()  # 1,2,3...
+
+    d["seg_ix"] = pd.Series(pd.NA, index=d.index, dtype="Int64")
+    d.loc[labeled, "seg_ix"] = (seg_counter[labeled] - 1).astype("Int64")
+
+    d["token_in_seg_ix"] = pd.Series(pd.NA, index=d.index, dtype="Int64")
+    d.loc[labeled, "token_in_seg_ix"] = (
+        d.loc[labeled].groupby(["prompt_ix", "seg_ix"], sort=False).cumcount().astype("Int64")
+    )
+
+    # ---- Cleanup ----
+    drop_cols = [
+        "msg_id",
+        "is_start_hdr", "is_end_hdr", "is_eot",
+        "is_bos", "is_eos",
+        "is_pure_nl",
+        "is_close", "before_end",
+        "end_hdr_seen", "is_role_tok",
+        "role_line", "seg_kind",
+        "after_end_hdr", "non_nl_after_end_hdr", "seen_non_nl_after_end_hdr", "is_header_nl",
+        "is_header_struct",
+        "in_body",
+        "tool_wrapper_user",
+        "in_tool_call", "tool_call_tag", "ws_tool_call",
+        "in_tool_resp", "tool_resp_tag", "ws_tool_resp",
+        "is_tag",
+    ]
+    out = d.drop(columns=drop_cols, errors="ignore")
+    out = out.sort_values(["prompt_ix", "token_ix"]).reset_index(drop=True)
+    return out
+
+
 def label_content_roles(model_prefix, sample_df):
     """
     Takes a token-level df, labels each token with its role only within the content span. Makes no assumption about the number of messages in the sequence.
@@ -1523,7 +1931,8 @@ def label_content_roles(model_prefix, sample_df):
     dispatch = {
         'gptoss20': label_gptoss_content_roles,
         'gptoss120': label_gptoss_content_roles,
-        'olmo3-7i': label_olmo3_content_roles,
+        'olmo3-7t': label_olmo3_content_roles,
+        'rnj1': label_rnj1_content_roles,
         'glm-46v-flash': label_glm4_content_roles,
         'apriel-16': label_apriel_content_roles,
         'qwen3coder': label_qwen3coder_content_roles
