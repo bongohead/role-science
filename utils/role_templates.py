@@ -54,7 +54,7 @@ def render_single_nemotron3(role: str, content: str) -> str:
     elif role == 'user':
         return f"<|im_start|>user\n{content}<|im_end|>\n"
     elif role == 'cot':
-        return f"<|im_start|>assistant\n<think>{content}</think><|im_end|>\n"
+        return f"<|im_start|>assistant\n<think>\n{content}\n</think>\n<|im_end|>\n"
     elif role == 'assistant':
         return f"<|im_start|>assistant\n<think></think>{content}<|im_end|>\n"
     elif role == 'tool':
@@ -142,6 +142,24 @@ def render_single_rnj1(role, content):
     elif role == 'tool':
         return f"<|start_header_id|>user<|end_header_id|>\n<tool_response>\n{content}\n</tool_response><|eot_id|>"
 
+
+def render_single_lfm25(role: str, content: str) -> str:
+    """
+    Render for LiquidAI LFM2.5 models
+    """
+    if role == "system":
+        return f"<|im_start|>system\n{content}<|im_end|>\n"
+    elif role == "user":
+        return f"<|im_start|>user\n{content}<|im_end|>\n"
+    elif role == "assistant":
+        return f"<|im_start|>assistant\n{content}<|im_end|>\n"
+    # elif role == "cot":
+    #     return f"<|im_start|>assistant\n<think>\n{content}\n</think><|im_end|>\n"
+    elif role == "tool":
+        return f"<|im_start|>tool\n{content}<|im_end|>\n"
+    else:
+        raise ValueError("Invalid role!")
+
 def render_single_message(model_prefix, role, content, tool_name = None) -> str:
     """
     Params:
@@ -159,20 +177,23 @@ def render_single_message(model_prefix, role, content, tool_name = None) -> str:
     Example:
         render_single_message('gptoss', 'user', None)
     """
-    if model_prefix in ['gptoss20', 'gptoss120']:
+    if model_prefix in ['gptoss-20b', 'gptoss-120b']:
         res = render_single_gptoss(role, content, tool_name = tool_name)
-    elif model_prefix in ['olmo3-7i', 'olmo3-7t']:
-        res = render_single_olmo3(role, content)
     elif model_prefix in ['glm-46v-flash']:
         res = render_single_glm4(role, content)
+    elif model_prefix in ['nemotron-3-nano']:
+        res = render_single_nemotron3(role, content)
+    elif model_prefix in ['lfm2.5-1.2b']:
+        res = render_single_lfm25(role, content)
     elif model_prefix in ['rnj1']:
         res = render_single_rnj1(role, content)
-    elif model_prefix in ['nemotron3nano']:
-        res = render_single_nemotron3(role, content)
     elif model_prefix in ['qwen3coder']:
         res = render_single_qwen3(role, content)
     elif model_prefix in ['apriel-16']:
         res = render_single_apriel(role, content)
+    elif model_prefix in ['olmo3-7i', 'olmo3-7t']:
+        res = render_single_olmo3(role, content)
+
 
     else:
         raise ValueError("Invalid model!")
@@ -191,14 +212,14 @@ def render_mixed_cot(model_prefix, cot, assistant) -> str:
     Example:
         render_mixed_cot('gptoss', 'The user says..', 'The user says')
     """
-    if model_prefix in ['gptoss20', 'gptoss120']:
+    if model_prefix in ['gptoss-20b', 'gptoss-120b']:
         return f"<|start|>assistant<|channel|>analysis<|message|>{cot}<|end|><|start|>assistant<|channel|>final<|message|>{assistant}<|end|>"
     elif model_prefix in ['olmo3-7i', 'olmo3-7t']:
         return f"<|im_start|>assistant\n<think>{cot}</think>{assistant}<|im_end|>\n"
     elif model_prefix in ['glm-46v-flash']:
         return f"<|assistant|>\n<think>{cot}</think>\n{assistant}"
-    elif model_prefix in ['nemotron3nano']:
-        return f"<|assistant|>\n<think>\n{cot}</think>\n{assistant}"
+    elif model_prefix in ['nemotron-3-nano']:
+        return f"<|im_start|>assistant\n<think>\n{cot}\n</think>\n{assistant}<|im_end|>\n"
     elif model_prefix in ['qwen3coder', 'qwen3next']:
         return f"<|im_start|>assistant\n<think>\n{cot}\n</think>\n\n{assistant}<|im_end|>\n"
     elif model_prefix in ['apriel-16']:
@@ -215,6 +236,7 @@ def load_chat_template(parent_dir, model_prefix) -> str:
         These are created by taking the default tokenizer.chat_template and applying minimal model-specific changes listed below. 
         These are modified for consistency such that for all models:
         - There's no default system prompt
+        - No BOS token by default
         - Thinking tags aren't stripped (for reasoning models)
         - 
     
@@ -223,24 +245,31 @@ def load_chat_template(parent_dir, model_prefix) -> str:
             (1) removes the default system prompt;
             (2) has {"role": "system", "content", "..."} propagate to the system prompt instead of the developer prompt;
             (3) supports passing <think> directly (instead of a separate thinking key as in https://huggingface.co/spaces/huggingfacejs/chat-template-playground?modelId=openai%2Fgpt-oss-20b&example=hello-world).
-        - For Qwen, this:
-            (1) prevents old <think></think> tags from being stripped.
         - For GLM4, this does not; it's just the standard chat template.
             (1) removes the [gMASK]<sop> prefix
+        - For LFM.5-1.2b:
+            (1) Retains old thinks (not a reasoning model, so irrelevant)
+            (2) Removes BOS token
         - For Olmo3, this:
             (1) does nothing, it's just the base template
         - For Apriel, this:
             (1) removes the default system prompt
+        - For Qwen, this:
+            (1) prevents old <think></think> tags from being stripped.
+
     """
     if model_prefix in ['gptoss20', 'gptoss120']:
         instruct_format = 'gptoss'
-    elif model_prefix in ['olmo3-7i', 'olmo3-7t']:
-        instruct_format = 'olmo3'
     elif model_prefix in ['glm-46v-flash']:
         instruct_format = 'glm4'
+    elif model_prefix in ['nemotron-3-nano']:
+        instruct_format = 'nemotron'
+    elif model_prefix in ['lfm2.5-1.2b']:
+        instruct_format = 'lfm2'
+    elif model_prefix in ['olmo3-7i', 'olmo3-7t']:
+        instruct_format = 'olmo3'
     elif model_prefix in ['nemotron3nano']:
         instruct_format = 'nemotron'
-
     elif model_prefix in ['apriel-16']:
         instruct_format = 'apriel'
     elif model_prefix in ['qwen3next', 'qwen3coder']:

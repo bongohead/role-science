@@ -1491,6 +1491,545 @@ def label_glm4_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def label_nemotron3_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Labels NVIDIA Nemotron 3 Nano 30B-A3B (ChatML) token streams with *content-only* roles.
+
+    Key template structure (HF chat_template.jinja):
+      - Outer messages: <|im_start|>ROLE\\n ... <|im_end|>\\n
+      - Assistant messages contain <think>...</think> (possibly empty).
+      - Tool calls (assistant): <tool_call> ... </tool_call>
+      - Tool outputs live inside a ChatML user wrapper as <tool_response> ... </tool_response>
+
+    Semantics:
+      - role is assigned ONLY to semantic content tokens.
+      - All protocol / wrapper / structural tokens are role=None and is_content=False.
+      - No assumptions about turn ordering.
+
+    Returns original columns +:
+      - role: {system, developer, user, assistant, cot, tool_call, tool} or None
+      - is_content: bool
+      - seg_ix: contiguous run index of content tokens with same role (tags break runs)
+      - token_in_seg_ix: 0-based within seg_ix (NA for non-content)
+    """
+    required = {"prompt_ix", "token_ix", "token"}
+    missing = required - set(sample_df.columns)
+    if missing:
+        raise ValueError(f"sample_df missing required columns: {sorted(missing)}")
+
+    df = (
+        sample_df.sort_values(["prompt_ix", "token_ix"])
+        .reset_index(drop=True)
+        .copy()
+    )
+
+    # -----------------------------
+    # Sentinels / wrappers
+    # -----------------------------
+    IM_START = "<|im_start|>"
+    IM_END = "<|im_end|>"
+    BOS = "<s>"
+
+    THINK_OPEN, THINK_CLOSE = "<think>", "</think>"
+    THINK_EMPTY = "<think></think>"
+
+    TCALL_OPEN, TCALL_CLOSE = "<tool_call>", "</tool_call>"
+    TRESP_OPEN, TRESP_CLOSE = "<tool_response>", "</tool_response>"
+
+    # Tool-call internal closers: treat as structural only inside assistant tool_call blocks
+    PARAM_CLOSE = "</parameter>"
+    FUNC_CLOSE = "</function>"
+
+    # Content-bearing open tags inside tool calls
+    FUNC_OPEN_PREFIX = "<function="
+    PARAM_OPEN_PREFIX = "<parameter="
+
+    # Newline detection (handles both real '\n' and byte-BPE newline glyphs)
+    NL_ONLY_RE = re.compile(r"^[\n\rĊĉĈ]+$")
+    NL_ANY_RE = re.compile(r"[\n\rĊĉĈ]")
+
+    tok = df["token"].astype(str)
+
+    # prev/next token (within prompt)
+    df["prev_token"] = df.groupby("prompt_ix", sort=False)["token"].shift(1)
+    df["next_token"] = df.groupby("prompt_ix", sort=False)["token"].shift(-1)
+
+    df["is_pure_nl"] = tok.str.fullmatch(NL_ONLY_RE, na=False)
+    df["has_nl_char"] = tok.str.contains(NL_ANY_RE, na=False)
+
+    # -----------------------------
+    # Outer ChatML message parsing
+    # -----------------------------
+    df["is_im_start"] = tok.eq(IM_START)
+    df["is_im_end"] = tok.eq(IM_END)
+    df["is_bos"] = tok.eq(BOS)
+
+    # message id increments on <|im_start|>
+    df["msg_id"] = df.groupby("prompt_ix", sort=False)["is_im_start"].cumsum()
+    df["pos_in_msg"] = df.groupby(["prompt_ix", "msg_id"], sort=False).cumcount()
+
+    # Header ends at the first token that contains a newline char/glyph (e.g., after ROLE in "<|im_start|>ROLE\n")
+    header_end_pos = (
+        df["pos_in_msg"]
+        .where((df["msg_id"] > 0) & df["has_nl_char"])
+        .groupby([df["prompt_ix"], df["msg_id"]], sort=False)
+        .transform("min")
+    ).fillna(np.inf)
+    df["header_end_pos"] = header_end_pos
+
+    # Track whether we've seen <|im_end|> within the message
+    df["im_end_cum"] = df.groupby(["prompt_ix", "msg_id"], sort=False)["is_im_end"].cumsum()
+
+    # Header tokens are always structural
+    df["is_header"] = (df["msg_id"] > 0) & (df["pos_in_msg"] <= df["header_end_pos"])
+
+    # Body tokens are after header and before <|im_end|>
+    df["in_body"] = (
+        (df["msg_id"] > 0)
+        & (df["pos_in_msg"] > df["header_end_pos"])
+        & (df["im_end_cum"].eq(0))
+    )
+
+    # ---- FIX: reconstruct outer_role by concatenating ALL header tokens after <|im_start|> up to header_end_pos
+    header_mask = (
+        (df["msg_id"] > 0)
+        & (df["pos_in_msg"] > 0)
+        & (df["pos_in_msg"] <= df["header_end_pos"])
+    )
+    header_joined = (
+        df.loc[header_mask]
+        .groupby(["prompt_ix", "msg_id"], sort=False)["token"]
+        .agg("".join)
+    )
+
+    outer_role = header_joined.astype(str)
+    outer_role = outer_role.str.split("\n", n=1).str[0]
+    outer_role = outer_role.str.split("\r", n=1).str[0]
+    outer_role = outer_role.str.rstrip("\n\rĊĉĈ").str.strip()
+
+    df = df.join(outer_role.rename("outer_role"), on=["prompt_ix", "msg_id"])
+    df["outer_role"] = df["outer_role"].fillna("")
+
+    is_assistant_msg = df["outer_role"].eq("assistant")
+    is_user_msg = df["outer_role"].eq("user")
+    is_system_msg = df["outer_role"].eq("system")
+    is_developer_msg = df["outer_role"].eq("developer")
+
+    # -----------------------------
+    # Inner wrapper state tracking
+    # -----------------------------
+    df["is_think_open"]  = df["in_body"] & is_assistant_msg & tok.eq(THINK_OPEN)
+    df["is_think_close"] = df["in_body"] & is_assistant_msg & tok.eq(THINK_CLOSE)
+    df["is_think_empty"] = df["in_body"] & is_assistant_msg & tok.eq(THINK_EMPTY)
+
+    df["is_tcall_open"]  = df["in_body"] & is_assistant_msg & tok.eq(TCALL_OPEN)
+    df["is_tcall_close"] = df["in_body"] & is_assistant_msg & tok.eq(TCALL_CLOSE)
+
+    df["is_tresp_open"]  = df["in_body"] & is_user_msg & tok.eq(TRESP_OPEN)
+    df["is_tresp_close"] = df["in_body"] & is_user_msg & tok.eq(TRESP_CLOSE)
+
+    msg_group = df.groupby(["prompt_ix", "msg_id"], sort=False)
+
+    df["think_open_cum"]  = msg_group["is_think_open"].cumsum()
+    df["think_close_cum"] = msg_group["is_think_close"].cumsum()
+    df["in_think"] = df["think_open_cum"] > df["think_close_cum"]
+
+    df["tcall_open_cum"]  = msg_group["is_tcall_open"].cumsum()
+    df["tcall_close_cum"] = msg_group["is_tcall_close"].cumsum()
+    df["in_tool_call"] = df["tcall_open_cum"] > df["tcall_close_cum"]
+
+    df["tresp_open_cum"]  = msg_group["is_tresp_open"].cumsum()
+    df["tresp_close_cum"] = msg_group["is_tresp_close"].cumsum()
+    df["in_tool_response"] = df["tresp_open_cum"] > df["tresp_close_cum"]
+
+    # -----------------------------
+    # Tag / structural token mask
+    # -----------------------------
+    prev_tok = df["prev_token"].astype(str)
+    next_tok = df["next_token"].astype(str)
+
+    prev_is_func_open = prev_tok.str.startswith(FUNC_OPEN_PREFIX, na=False)
+    prev_is_param_open = prev_tok.str.startswith(PARAM_OPEN_PREFIX, na=False)
+    next_is_func_open = next_tok.str.startswith(FUNC_OPEN_PREFIX, na=False)
+    next_is_param_open = next_tok.str.startswith(PARAM_OPEN_PREFIX, na=False)
+
+    df["is_control"] = df["is_bos"] | df["is_im_start"] | df["is_im_end"] | (df["msg_id"].eq(0))
+
+    df["is_wrapper_tag"] = (
+        df["is_header"]
+        | df["is_im_start"] | df["is_im_end"]
+        | df["is_think_open"] | df["is_think_close"] | df["is_think_empty"]
+        | df["is_tcall_open"] | df["is_tcall_close"]
+        | df["is_tresp_open"] | df["is_tresp_close"]
+    )
+
+    df["is_toolcall_internal_close"] = (
+        df["in_body"]
+        & is_assistant_msg
+        & df["in_tool_call"]
+        & tok.isin([PARAM_CLOSE, FUNC_CLOSE])
+    )
+
+    # Template-attached structural newlines (pure newline tokens only)
+    df["is_struct_nl"] = df["is_pure_nl"] & (
+        prev_tok.eq(IM_END)
+        | prev_tok.eq(THINK_OPEN)
+        | next_tok.eq(THINK_CLOSE)
+        | prev_tok.eq(THINK_CLOSE)
+        | next_tok.eq(TCALL_OPEN)
+        | prev_tok.eq(TCALL_OPEN)
+        | next_tok.eq(TCALL_CLOSE)
+        | prev_tok.eq(TCALL_CLOSE)
+        | prev_tok.eq(TRESP_OPEN)
+        | next_tok.eq(TRESP_CLOSE)
+        | prev_tok.eq(TRESP_CLOSE)
+        | next_tok.eq(TRESP_OPEN)
+        | prev_is_func_open
+        | prev_is_param_open
+        | next_tok.eq(PARAM_CLOSE)
+        | prev_tok.eq(PARAM_CLOSE)
+        | next_tok.eq(FUNC_CLOSE)
+        | prev_tok.eq(FUNC_CLOSE)
+        | next_is_param_open
+        | next_is_func_open
+    )
+
+    df["is_tag"] = (
+        df["is_control"]
+        | df["is_wrapper_tag"]
+        | df["is_toolcall_internal_close"]
+        | df["is_struct_nl"]
+    )
+
+    df["potential_content"] = df["in_body"] & ~df["is_tag"]
+
+    # -----------------------------
+    # Content-only role assignment
+    # -----------------------------
+    role = np.array([None] * len(df), dtype=object)
+
+    # system / developer
+    role[(df["potential_content"] & is_system_msg).to_numpy()] = "system"
+    role[(df["potential_content"] & is_developer_msg).to_numpy()] = "developer"
+
+    # user vs tool (inside tool_response)
+    user_content = df["potential_content"] & is_user_msg
+    role[(user_content & df["in_tool_response"]).to_numpy()] = "tool"
+    role[(user_content & ~df["in_tool_response"]).to_numpy()] = "user"
+
+    # assistant: tool_call > cot > assistant
+    asst_content = df["potential_content"] & is_assistant_msg
+    role[(asst_content & df["in_tool_call"]).to_numpy()] = "tool_call"
+    role[(asst_content & ~df["in_tool_call"] & df["in_think"]).to_numpy()] = "cot"
+    role[(asst_content & ~df["in_tool_call"] & ~df["in_think"]).to_numpy()] = "assistant"
+
+    df["role"] = role
+    df["is_content"] = df["role"].notna()
+
+    # -----------------------------
+    # seg_ix + token_in_seg_ix (content-only)
+    # -----------------------------
+    is_labeled = df["is_content"]
+
+    prev_labeled = is_labeled.groupby(df["prompt_ix"], sort=False).shift(1, fill_value=False)
+    prev_role = df.groupby("prompt_ix", sort=False)["role"].shift(1)
+
+    is_new_seg = is_labeled & (~prev_labeled | (df["role"] != prev_role))
+    seg_counter = is_new_seg.groupby(df["prompt_ix"], sort=False).cumsum()  # 1,2,3,...
+
+    df["seg_ix"] = pd.Series(pd.NA, index=df.index, dtype="Int64")
+    df.loc[is_labeled, "seg_ix"] = (seg_counter[is_labeled] - 1).astype("Int64")
+
+    df["token_in_seg_ix"] = pd.Series(pd.NA, index=df.index, dtype="Int64")
+    df.loc[is_labeled, "token_in_seg_ix"] = (
+        df.loc[is_labeled]
+        .groupby(["prompt_ix", "seg_ix"], sort=False)
+        .cumcount()
+        .astype("Int64")
+    )
+
+    # -----------------------------
+    # Cleanup
+    # -----------------------------
+    drop_cols = [
+        "prev_token", "next_token",
+        "is_pure_nl", "has_nl_char",
+        "is_im_start", "is_im_end", "is_bos",
+        "msg_id", "pos_in_msg", "header_end_pos", "im_end_cum",
+        "is_header", "in_body", "outer_role",
+        "is_think_open", "is_think_close", "is_think_empty",
+        "is_tcall_open", "is_tcall_close",
+        "is_tresp_open", "is_tresp_close",
+        "think_open_cum", "think_close_cum",
+        "tcall_open_cum", "tcall_close_cum",
+        "tresp_open_cum", "tresp_close_cum",
+        "in_think", "in_tool_call", "in_tool_response",
+        "is_control", "is_wrapper_tag", "is_toolcall_internal_close", "is_struct_nl", "is_tag",
+        "potential_content",
+    ]
+
+    out = df.drop(columns=drop_cols, errors="ignore")
+    out = out.sort_values(["prompt_ix", "token_ix"]).reset_index(drop=True)
+    return out
+
+
+import re
+import numpy as np
+import pandas as pd
+
+
+def label_lfm2_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
+    required = {"prompt_ix", "token_ix", "token"}
+    missing = required - set(sample_df.columns)
+    if missing:
+        raise ValueError(f"sample_df missing required columns: {sorted(missing)}")
+
+    df = (
+        sample_df.sort_values(["prompt_ix", "token_ix"])
+        .reset_index(drop=True)
+        .copy()
+    )
+
+    tok = df["token"].astype(str)
+
+    # -----------------------------
+    # Sentinels / wrappers
+    # -----------------------------
+    IM_START = "<|im_start|>"
+    IM_END = "<|im_end|>"
+
+    COMMON_BOS = {"<s>", "<|begin_of_text|>", "<|bos|>"}
+
+    THINK_OPEN, THINK_CLOSE = "<think>", "</think>"
+    THINK_EMPTY = "<think></think>"
+
+    # Optional wrappers (not mandated by the LFM2.5 template, but common in traces)
+    TCALL_OPEN, TCALL_CLOSE = "<tool_call>", "</tool_call>"
+    TRESP_OPEN, TRESP_CLOSE = "<tool_response>", "</tool_response>"
+
+    # Optional internal tool-call closers
+    PARAM_CLOSE = "</parameter>"
+    FUNC_CLOSE = "</function>"
+    FUNC_OPEN_PREFIX = "<function="
+    PARAM_OPEN_PREFIX = "<parameter="
+
+    # Newline detection (plain '\n' and common byte-BPE newline glyphs)
+    NL_ONLY_RE = re.compile(r"^[\n\rĊĉĈ]+$")
+    NL_ANY_RE = re.compile(r"[\n\rĊĉĈ]")
+
+    # prev/next token (within prompt)
+    df["prev_token"] = df.groupby("prompt_ix", sort=False)["token"].shift(1)
+    df["next_token"] = df.groupby("prompt_ix", sort=False)["token"].shift(-1)
+
+    df["is_pure_nl"] = tok.str.fullmatch(NL_ONLY_RE, na=False)
+    df["has_nl_char"] = tok.str.contains(NL_ANY_RE, na=False)
+
+    # -----------------------------
+    # Outer ChatML message parsing
+    # -----------------------------
+    df["is_im_start"] = tok.eq(IM_START)
+    df["is_im_end"] = tok.eq(IM_END)
+    df["is_common_bos"] = tok.isin(COMMON_BOS)
+
+    df["msg_id"] = df.groupby("prompt_ix", sort=False)["is_im_start"].cumsum()
+    df["pos_in_msg"] = df.groupby(["prompt_ix", "msg_id"], sort=False).cumcount()
+
+    # header_end_pos = first token containing any newline char/glyph
+    header_end_pos = (
+        df["pos_in_msg"]
+        .where((df["msg_id"] > 0) & df["has_nl_char"])
+        .groupby([df["prompt_ix"], df["msg_id"]], sort=False)
+        .transform("min")
+    ).fillna(np.inf)
+    df["header_end_pos"] = header_end_pos
+
+    # If the header-ending token contains newline + trailing characters, treat it as mixed (content-bearing)
+    df["header_end_token_mixed"] = (
+        (df["msg_id"] > 0)
+        & (df["pos_in_msg"] == df["header_end_pos"])
+        & tok.str.contains(r"[\n\rĊĉĈ].+", regex=True, na=False)
+    )
+
+    # We must compute im_end_cum AFTER msg_id exists
+    msg_g0 = df.groupby(["prompt_ix", "msg_id"], sort=False)
+    df["im_end_cum"] = msg_g0["is_im_end"].cumsum()
+
+    # Header tokens: structural (except mixed header_end token)
+    df["is_header"] = (
+        (df["msg_id"] > 0)
+        & (df["pos_in_msg"] > 0)
+        & (
+            (df["pos_in_msg"] < df["header_end_pos"])
+            | ((df["pos_in_msg"] == df["header_end_pos"]) & ~df["header_end_token_mixed"])
+        )
+    )
+
+    # Body tokens:
+    df["in_body"] = (
+        (df["msg_id"] > 0)
+        & (df["im_end_cum"].eq(0))
+        & (
+            (df["pos_in_msg"] > df["header_end_pos"])
+            | ((df["pos_in_msg"] == df["header_end_pos"]) & df["header_end_token_mixed"])
+        )
+    )
+
+    # Reconstruct outer_role by joining header tokens up to header_end_pos and stripping at first newline
+    header_mask = (
+        (df["msg_id"] > 0)
+        & (df["pos_in_msg"] > 0)
+        & (df["pos_in_msg"] <= df["header_end_pos"])
+    )
+    header_joined = (
+        df.loc[header_mask]
+        .groupby(["prompt_ix", "msg_id"], sort=False)["token"]
+        .agg("".join)
+    )
+    outer_role = header_joined.astype(str).str.replace(r"[\n\rĊĉĈ].*$", "", regex=True).str.strip()
+
+    df = df.join(outer_role.rename("outer_role"), on=["prompt_ix", "msg_id"])
+    df["outer_role"] = df["outer_role"].fillna("")
+
+    is_system_msg = df["outer_role"].eq("system")
+    is_user_msg = df["outer_role"].eq("user")
+    is_assistant_msg = df["outer_role"].eq("assistant")
+    is_tool_msg = df["outer_role"].eq("tool")
+    is_developer_msg = df["outer_role"].eq("developer")
+
+    # -----------------------------
+    # Inner wrapper state tracking
+    # -----------------------------
+    # Think spans (assistant-only)
+    df["is_think_open"] = df["in_body"] & is_assistant_msg & tok.eq(THINK_OPEN)
+    df["is_think_close"] = df["in_body"] & is_assistant_msg & tok.eq(THINK_CLOSE)
+    df["is_think_empty"] = df["in_body"] & is_assistant_msg & tok.eq(THINK_EMPTY)
+
+    # Optional tool_call spans (assistant-only)
+    df["is_tcall_open"] = df["in_body"] & is_assistant_msg & tok.eq(TCALL_OPEN)
+    df["is_tcall_close"] = df["in_body"] & is_assistant_msg & tok.eq(TCALL_CLOSE)
+
+    # Optional tool_response spans (user/tool)
+    df["is_tresp_open"] = df["in_body"] & (is_user_msg | is_tool_msg) & tok.eq(TRESP_OPEN)
+    df["is_tresp_close"] = df["in_body"] & (is_user_msg | is_tool_msg) & tok.eq(TRESP_CLOSE)
+
+    # IMPORTANT: recreate groupby AFTER adding the columns we will cumsum
+    msg_g = df.groupby(["prompt_ix", "msg_id"], sort=False)
+
+    df["think_open_cum"] = msg_g["is_think_open"].cumsum()
+    df["think_close_cum"] = msg_g["is_think_close"].cumsum()
+    df["in_think"] = df["think_open_cum"] > df["think_close_cum"]
+
+    df["tcall_open_cum"] = msg_g["is_tcall_open"].cumsum()
+    df["tcall_close_cum"] = msg_g["is_tcall_close"].cumsum()
+    df["in_tool_call"] = df["tcall_open_cum"] > df["tcall_close_cum"]
+
+    df["tresp_open_cum"] = msg_g["is_tresp_open"].cumsum()
+    df["tresp_close_cum"] = msg_g["is_tresp_close"].cumsum()
+    df["in_tool_response"] = df["tresp_open_cum"] > df["tresp_close_cum"]
+
+    # -----------------------------
+    # Tag / structural token mask
+    # -----------------------------
+    prev_tok = df["prev_token"].astype(str)
+    next_tok = df["next_token"].astype(str)
+
+    prev_is_func_open = prev_tok.str.startswith(FUNC_OPEN_PREFIX, na=False)
+    prev_is_param_open = prev_tok.str.startswith(PARAM_OPEN_PREFIX, na=False)
+    next_is_func_open = next_tok.str.startswith(FUNC_OPEN_PREFIX, na=False)
+    next_is_param_open = next_tok.str.startswith(PARAM_OPEN_PREFIX, na=False)
+
+    # Control tokens
+    df["is_control"] = (df["msg_id"].eq(0)) | df["is_im_start"] | df["is_im_end"] | df["is_common_bos"]
+
+    # Wrapper tags are always structural
+    df["is_wrapper_tag"] = (
+        df["is_header"]
+        | df["is_im_start"] | df["is_im_end"]
+        | df["is_think_open"] | df["is_think_close"] | df["is_think_empty"]
+        | df["is_tcall_open"] | df["is_tcall_close"]
+        | df["is_tresp_open"] | df["is_tresp_close"]
+    )
+
+    # Tool-call internal closers (structural only inside assistant tool_call blocks)
+    df["is_toolcall_internal_close"] = (
+        df["in_body"] & is_assistant_msg & df["in_tool_call"] & tok.isin([PARAM_CLOSE, FUNC_CLOSE])
+    )
+
+    # Template-attached newline after <|im_end|>\n
+    df["is_struct_nl"] = df["is_pure_nl"] & prev_tok.eq(IM_END)
+
+    df["is_tag"] = df["is_control"] | df["is_wrapper_tag"] | df["is_toolcall_internal_close"] | df["is_struct_nl"]
+    df["potential_content"] = df["in_body"] & ~df["is_tag"]
+
+    # -----------------------------
+    # Content-only role assignment
+    # -----------------------------
+    role = np.array([None] * len(df), dtype=object)
+
+    role[(df["potential_content"] & is_system_msg).to_numpy()] = "system"
+    role[(df["potential_content"] & is_developer_msg).to_numpy()] = "developer"
+
+    # tool outer role
+    tool_content = df["potential_content"] & is_tool_msg
+    role[tool_content.to_numpy()] = "tool"
+
+    # user outer role (tool_response overrides)
+    user_content = df["potential_content"] & is_user_msg
+    role[(user_content & df["in_tool_response"]).to_numpy()] = "tool"
+    role[(user_content & ~df["in_tool_response"]).to_numpy()] = "user"
+
+    # assistant outer role: tool_call > cot > assistant
+    asst_content = df["potential_content"] & is_assistant_msg
+    role[(asst_content & df["in_tool_call"]).to_numpy()] = "tool_call"
+    role[(asst_content & ~df["in_tool_call"] & df["in_think"]).to_numpy()] = "cot"
+    role[(asst_content & ~df["in_tool_call"] & ~df["in_think"]).to_numpy()] = "assistant"
+
+    df["role"] = role
+    df["is_content"] = df["role"].notna()
+
+    # -----------------------------
+    # seg_ix + token_in_seg_ix (content-only)
+    # -----------------------------
+    is_labeled = df["is_content"]
+
+    prev_labeled = is_labeled.groupby(df["prompt_ix"], sort=False).shift(1, fill_value=False)
+    prev_role = df.groupby("prompt_ix", sort=False)["role"].shift(1)
+
+    is_new_seg = is_labeled & (~prev_labeled | (df["role"] != prev_role))
+    seg_counter = is_new_seg.groupby(df["prompt_ix"], sort=False).cumsum()
+
+    df["seg_ix"] = pd.Series(pd.NA, index=df.index, dtype="Int64")
+    df.loc[is_labeled, "seg_ix"] = (seg_counter[is_labeled] - 1).astype("Int64")
+
+    df["token_in_seg_ix"] = pd.Series(pd.NA, index=df.index, dtype="Int64")
+    df.loc[is_labeled, "token_in_seg_ix"] = (
+        df.loc[is_labeled]
+        .groupby(["prompt_ix", "seg_ix"], sort=False)
+        .cumcount()
+        .astype("Int64")
+    )
+
+    # -----------------------------
+    # Cleanup
+    # -----------------------------
+    drop_cols = [
+        "prev_token", "next_token",
+        "is_pure_nl", "has_nl_char",
+        "is_im_start", "is_im_end", "is_common_bos",
+        "msg_id", "pos_in_msg", "header_end_pos", "header_end_token_mixed", "im_end_cum",
+        "is_header", "in_body", "outer_role",
+        "is_think_open", "is_think_close", "is_think_empty",
+        "think_open_cum", "think_close_cum", "in_think",
+        "is_tcall_open", "is_tcall_close", "tcall_open_cum", "tcall_close_cum", "in_tool_call",
+        "is_tresp_open", "is_tresp_close", "tresp_open_cum", "tresp_close_cum", "in_tool_response",
+        "is_control", "is_wrapper_tag", "is_toolcall_internal_close", "is_struct_nl", "is_tag",
+        "potential_content",
+    ]
+    out = df.drop(columns=drop_cols, errors="ignore")
+    out = out.sort_values(["prompt_ix", "token_ix"]).reset_index(drop=True)
+    return out
+
+
 def label_rnj1_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
     """
     Label EssentialAI/rnj-1-instruct token streams with content-only roles.
@@ -1929,13 +2468,16 @@ def label_content_roles(model_prefix, sample_df):
         raise ValueError(f"sample_df missing required columns: {sorted(missing)}")
 
     dispatch = {
-        'gptoss20': label_gptoss_content_roles,
-        'gptoss120': label_gptoss_content_roles,
-        'olmo3-7t': label_olmo3_content_roles,
-        'rnj1': label_rnj1_content_roles,
-        'glm-46v-flash': label_glm4_content_roles,
-        'apriel-16': label_apriel_content_roles,
-        'qwen3coder': label_qwen3coder_content_roles
+        'gptoss-20b': label_gptoss_content_roles,
+        'gptoss-120b': label_gptoss_content_roles,
+        'glm-4.6v-flash': label_glm4_content_roles,
+        'nemotron-3-nano': label_nemotron3_content_roles,
+        'lfm2.5-1.2b': label_lfm2_content_roles
+        # 'olmo3-7t': label_olmo3_content_roles,
+        # 'rnj1': label_rnj1_content_roles,
+        # 'glm-46v-flash': label_glm4_content_roles,
+        # 'apriel-16': label_apriel_content_roles,
+        # 'qwen3coder': label_qwen3coder_content_roles
     }
 
     try:
