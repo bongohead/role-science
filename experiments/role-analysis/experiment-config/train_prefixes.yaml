@@ -1,7 +1,7 @@
-gptoss20:
+gptoss-20b:
   - ""
   - "<|startoftext|>"
-gptoss120:
+gptoss-120b:
   - ""
   - "<|startoftext|>"
 olmo3-7t:
@@ -13,7 +13,6 @@ glm-46v-flash:
 nemotron-3-nano:
   - ""
   - "<s>"
-  # - "<|im_start|>system\n<|im_end|>\n"
 lfm2.5-1.2b:
   - ""
   - "<|startoftext|>"

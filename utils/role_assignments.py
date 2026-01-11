@@ -2470,14 +2470,11 @@ def label_content_roles(model_prefix, sample_df):
     dispatch = {
         'gptoss-20b': label_gptoss_content_roles,
         'gptoss-120b': label_gptoss_content_roles,
-        'glm-4.6v-flash': label_glm4_content_roles,
         'nemotron-3-nano': label_nemotron3_content_roles,
+        'glm-4.6v-flash': label_glm4_content_roles,
+        'apriel-1.6b-thinker': label_apriel_content_roles,
+        'olmo3-7b-thinker': label_olmo3_content_roles,
         'lfm2.5-1.2b': label_lfm2_content_roles
-        # 'olmo3-7t': label_olmo3_content_roles,
-        # 'rnj1': label_rnj1_content_roles,
-        # 'glm-46v-flash': label_glm4_content_roles,
-        # 'apriel-16': label_apriel_content_roles,
-        # 'qwen3coder': label_qwen3coder_content_roles
     }
 
     try:

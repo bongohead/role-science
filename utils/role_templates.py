@@ -21,30 +21,6 @@ def render_single_gptoss(role: str, content: str, *, tool_name = None) -> str:
         raise ValueError("Invalid role!")
     return f"<|start|>{header}{content}<|end|>"
 
-def render_single_qwen3(role: str, content: str) -> str:
-    """
-    Wrap arbitrary text as a single Qwen3Moe message.
-    Notes:
-      - 'cot' is rendered as an assistant message with a <think>...</think> block only.
-      - 'assistant' is rendered as an assistant message with visible content only.
-      - 'tool' represents TOOL OUTPUT, which Qwen3 wraps as a user turn containing a <tool_response>...</tool_response> block.
-        (The tool name is not used here; function *calls* are emitted from assistant messages via <tool_call>...</tool_call>.)
-    """
-    if role == 'system':
-        return f"<|im_start|>system\n{content}<|im_end|>\n"
-    elif role == 'user':
-        return f"<|im_start|>user\n{content}<|im_end|>\n"
-    elif role == 'cot':
-        return f"<|im_start|>assistant\n<think>\n{content}\n</think>\n\n<|im_end|>\n"
-    elif role == 'assistant':
-        return f"<|im_start|>assistant\n{content}<|im_end|>\n"
-        # return f"<|im_start|>assistant\n<think>\n\n</think>\n\n{content}<|im_end|>\n"
-    elif role == 'tool':
-        # Tool output fed back as a user message block
-        return f"<|im_start|>user\n<tool_response>\n{content}\n</tool_response><|im_end|>\n"
-    else:
-        raise ValueError("Invalid role!")
-    
 def render_single_nemotron3(role: str, content: str) -> str:
     """
     Wrap arbitrary text as a single Nemotron3 message
@@ -61,7 +37,46 @@ def render_single_nemotron3(role: str, content: str) -> str:
         return f"<|im_start|>user\n<tool_response>\n{content}\n</tool_response>\n<|im_end|>\n"
     else:
         raise ValueError("Invalid role!")
+    
+def render_single_glm4(role: str, content: str) -> str:
+    """
+    Render a single GLM-4 message segment.
 
+    Notes:
+      - Does NOT include the global '[gMASK]<sop>' prefix (add once per full prompt).
+      - 'cot' emits only a <think> block; 'assistant' emits an empty think + visible content.
+      - Tool OUTPUT is wrapped as an observation + <tool_response> block.
+    """
+    if role == 'system':
+        return f"<|system|>\n{content}"
+    elif role == 'user':
+        return f"<|user|>\n{content}"
+    elif role == 'cot':
+        return f"<|assistant|>\n<think>{content}</think>\n"
+    elif role == 'assistant':
+        return f"<|assistant|>\n<think></think>\n{content}"
+    elif role == 'tool':
+        # Tool OUTPUT (results). GLM-4.6 groups consecutive tool responses under <|observation|>.
+        # For a single message helper we always include the prefix.
+        return f"<|observation|>\n<tool_response>\n{content}\n</tool_response>"
+    else:
+        raise ValueError("Invalid role!")
+    
+def render_single_apriel(role, content):
+    """
+    Render for Apriel format
+    """
+    if role == 'system':
+        return f"<|begin_system|>\n{content}\n"
+    elif role == 'user':
+        return f"<|begin_user|>\n{content}\n"
+    elif role == 'cot':
+        return f"<|begin_assistant|>\nHere are my reasoning steps:\n{content}\n<|end|>"
+    elif role == 'assistant':
+        return f"<|begin_assistant|>\n[BEGIN FINAL RESPONSE]\n{content}\n<|end|>"
+    elif role == 'tool':
+        return f"<|begin_tool_result|>\n{content}\n\n\n"
+    
 def render_single_olmo3(role: str, content: str) -> str:
     """
     Wrap arbitrary text as a single Olmo-3 Think-style message.
@@ -90,45 +105,30 @@ def render_single_olmo3(role: str, content: str) -> str:
     else:
         raise ValueError("Invalid role!")
 
-def render_single_glm4(role: str, content: str) -> str:
+def render_single_qwen3(role: str, content: str) -> str:
     """
-    Render a single GLM-4 message segment.
-
+    Wrap arbitrary text as a single Qwen3Moe message.
     Notes:
-      - Does NOT include the global '[gMASK]<sop>' prefix (add once per full prompt).
-      - 'cot' emits only a <think> block; 'assistant' emits an empty think + visible content.
-      - Tool OUTPUT is wrapped as an observation + <tool_response> block.
+      - 'cot' is rendered as an assistant message with a <think>...</think> block only.
+      - 'assistant' is rendered as an assistant message with visible content only.
+      - 'tool' represents TOOL OUTPUT, which Qwen3 wraps as a user turn containing a <tool_response>...</tool_response> block.
+        (The tool name is not used here; function *calls* are emitted from assistant messages via <tool_call>...</tool_call>.)
     """
     if role == 'system':
-        return f"<|system|>\n{content}"
+        return f"<|im_start|>system\n{content}<|im_end|>\n"
     elif role == 'user':
-        return f"<|user|>\n{content}"
+        return f"<|im_start|>user\n{content}<|im_end|>\n"
     elif role == 'cot':
-        return f"<|assistant|>\n<think>{content}</think>\n"
+        return f"<|im_start|>assistant\n<think>\n{content}\n</think>\n\n<|im_end|>\n"
     elif role == 'assistant':
-        return f"<|assistant|>\n<think></think>\n{content}"
+        return f"<|im_start|>assistant\n{content}<|im_end|>\n"
+        # return f"<|im_start|>assistant\n<think>\n\n</think>\n\n{content}<|im_end|>\n"
     elif role == 'tool':
-        # Tool OUTPUT (results). GLM-4.6 groups consecutive tool responses under <|observation|>.
-        # For a single message helper we always include the prefix.
-        return f"<|observation|>\n<tool_response>\n{content}\n</tool_response>"
+        # Tool output fed back as a user message block
+        return f"<|im_start|>user\n<tool_response>\n{content}\n</tool_response><|im_end|>\n"
     else:
         raise ValueError("Invalid role!")
-        
-def render_single_apriel(role, content):
-    """
-    Render for Apriel format
-    """
-    if role == 'system':
-        return f"<|begin_system|>\n{content}\n"
-    elif role == 'user':
-        return f"<|begin_user|>\n{content}\n"
-    elif role == 'cot':
-        return f"<|begin_assistant|>\nHere are my reasoning steps:\n{content}\n<|end|>"
-    elif role == 'assistant':
-        return f"<|begin_assistant|>\n[BEGIN FINAL RESPONSE]\n{content}\n<|end|>"
-    elif role == 'tool':
-        return f"<|begin_tool_result|>\n{content}\n\n\n"
-
+    
 def render_single_rnj1(role, content):
     """
     Render for RNJ-1 format
@@ -141,7 +141,6 @@ def render_single_rnj1(role, content):
         return f"<|start_header_id|>assistant<|end_header_id|>\n{content}<|eot_id|>"
     elif role == 'tool':
         return f"<|start_header_id|>user<|end_header_id|>\n<tool_response>\n{content}\n</tool_response><|eot_id|>"
-
 
 def render_single_lfm25(role: str, content: str) -> str:
     """
@@ -179,22 +178,16 @@ def render_single_message(model_prefix, role, content, tool_name = None) -> str:
     """
     if model_prefix in ['gptoss-20b', 'gptoss-120b']:
         res = render_single_gptoss(role, content, tool_name = tool_name)
-    elif model_prefix in ['glm-46v-flash']:
-        res = render_single_glm4(role, content)
     elif model_prefix in ['nemotron-3-nano']:
         res = render_single_nemotron3(role, content)
+    elif model_prefix in ['glm-4.6v-flash']:
+        res = render_single_glm4(role, content)
+    elif model_prefix in ['apriel-1.6b-thinker']:
+        res = render_single_apriel(role, content)
+    elif model_prefix in ['olmo3-7b-think']:
+        res = render_single_olmo3(role, content)
     elif model_prefix in ['lfm2.5-1.2b']:
         res = render_single_lfm25(role, content)
-    elif model_prefix in ['rnj1']:
-        res = render_single_rnj1(role, content)
-    elif model_prefix in ['qwen3coder']:
-        res = render_single_qwen3(role, content)
-    elif model_prefix in ['apriel-16']:
-        res = render_single_apriel(role, content)
-    elif model_prefix in ['olmo3-7i', 'olmo3-7t']:
-        res = render_single_olmo3(role, content)
-
-
     else:
         raise ValueError("Invalid model!")
 
@@ -214,16 +207,14 @@ def render_mixed_cot(model_prefix, cot, assistant) -> str:
     """
     if model_prefix in ['gptoss-20b', 'gptoss-120b']:
         return f"<|start|>assistant<|channel|>analysis<|message|>{cot}<|end|><|start|>assistant<|channel|>final<|message|>{assistant}<|end|>"
-    elif model_prefix in ['olmo3-7i', 'olmo3-7t']:
-        return f"<|im_start|>assistant\n<think>{cot}</think>{assistant}<|im_end|>\n"
-    elif model_prefix in ['glm-46v-flash']:
-        return f"<|assistant|>\n<think>{cot}</think>\n{assistant}"
     elif model_prefix in ['nemotron-3-nano']:
         return f"<|im_start|>assistant\n<think>\n{cot}\n</think>\n{assistant}<|im_end|>\n"
-    elif model_prefix in ['qwen3coder', 'qwen3next']:
-        return f"<|im_start|>assistant\n<think>\n{cot}\n</think>\n\n{assistant}<|im_end|>\n"
-    elif model_prefix in ['apriel-16']:
+    elif model_prefix in ['glm-4.6v-flash']:
+        return f"<|assistant|>\n<think>{cot}</think>\n{assistant}"
+    elif model_prefix in ['apriel-1.6b-thinker']:
         return f"<|begin_assistant|>\nHere are my reasoning steps:\n{cot}\n[BEGIN FINAL RESPONSE]\n{assistant}\n<|end|>\n"
+    elif model_prefix in ['olmo3-7b-think']:
+        return f"<|im_start|>assistant\n<think>{cot}</think>{assistant}<|im_end|>\n"
     else:
         raise ValueError("Invalid model!")
 
@@ -258,22 +249,19 @@ def load_chat_template(parent_dir, model_prefix) -> str:
             (1) prevents old <think></think> tags from being stripped.
 
     """
-    if model_prefix in ['gptoss20', 'gptoss120']:
+    if model_prefix in ['gptoss-20b', 'gptoss-120b']:
         instruct_format = 'gptoss'
-    elif model_prefix in ['glm-46v-flash']:
-        instruct_format = 'glm4'
     elif model_prefix in ['nemotron-3-nano']:
         instruct_format = 'nemotron'
+    elif model_prefix in ['glm-46v-flash']:
+        instruct_format = 'glm4'
+    elif model_prefix in ['apriel-1.6b-thinker']:
+        instruct_format = 'apriel'
+    elif model_prefix in ['olmo3-7b-think']:
+        instruct_format = 'olmo3'
     elif model_prefix in ['lfm2.5-1.2b']:
         instruct_format = 'lfm2'
-    elif model_prefix in ['olmo3-7i', 'olmo3-7t']:
-        instruct_format = 'olmo3'
-    elif model_prefix in ['nemotron3nano']:
-        instruct_format = 'nemotron'
-    elif model_prefix in ['apriel-16']:
-        instruct_format = 'apriel'
-    elif model_prefix in ['qwen3next', 'qwen3coder']:
-        instruct_format = 'qwen3'
+
     else:
         raise ValueError(f"Model prefix {model_prefix} not supported")
 

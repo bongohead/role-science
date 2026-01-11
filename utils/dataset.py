@@ -87,7 +87,7 @@ class ReconstructableTextDataset(Dataset):
 
             # Dedupe overlapping offsets: Some tokenizers (e.g., Qwen's byte-level BPE) report
             # overlapping character spans for multi-byte chars like emojis. Without dedupe,
-            # text[10:11] three times → "🧸🧸🧸". We track `last_end` (furthest char emitted)
+            # text[10:11] three times → "🧸🧸🧸". This tracks `last_end` (furthest char emitted)
             # and only emit chars past that point, so each character appears exactly once.
             # Row count is unchanged—one row per token ID—only the `token` string changes.
             for i in range(self.input_ids.shape[0]):
