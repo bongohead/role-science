@@ -18,32 +18,27 @@
 		{%- set ns.last_user_idx = loop.index0 -%}
 	{%- endif -%}
 {%- endfor -%}
-{%- if messages[0]["role"] == "system" -%}
-	{%- set system_message = messages[0]["content"] -%}
-	{%- set loop_messages = messages[1:] -%}
-{%- else -%}
-	{%- set system_message = "" -%}
-	{%- set loop_messages = messages -%}
-{%- endif -%}
+
+{#  Do NOT extract/prepend a system prompt. Keep messages as-is.  #}
+{%- set loop_messages = messages -%}
+
 {%- if not tools is defined -%}
 	{%- set tools = [] -%}
 {%- endif -%}
-{#  Recompute last_user_idx relative to loop_messages after handling system  #}
-{%- set ns = namespace(last_user_idx=-1) -%}
+
+{#  Recompute last_user_idx relative to loop_messages  #}
+{%- set ns = namespace(last_user_idx=-1, tools_rendered=false) -%}
 {%- for m in loop_messages -%}
 	{%- if m["role"] == "user" -%}
 		{%- set ns.last_user_idx = loop.index0 -%}
 	{%- endif -%}
 {%- endfor -%}
-{%- if system_message is defined -%}
-	{{- "<|im_start|>system\n" + system_message -}}
-{%- elif tools is iterable and tools | length > 0 -%}
+
+{#  If tools exist and the first message is NOT system, render a tools-only system block.  #}
+{%- if tools is iterable and tools | length > 0 and not (loop_messages and loop_messages[0]["role"] == "system") -%}
 	{{- "<|im_start|>system\n" -}}
 {%- endif -%}
-{%- if tools is iterable and tools | length > 0 -%}
-	{%- if system_message is defined and system_message | length > 0 -%}
-		{{- "\n\n" -}}
-	{%- endif -%}
+{%- if tools is iterable and tools | length > 0 and not (loop_messages and loop_messages[0]["role"] == "system") -%}
 	{{- "# Tools\n\nYou have access to the following functions:\n\n" -}}
 	{{- "<tools>" -}}
 	{%- for tool in tools -%}
@@ -86,11 +81,10 @@
 	{{- "\n</tools>" -}}
 	{{- "\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT>" -}}
 {%- endif -%}
-{%- if system_message is defined -%}
-	{{- "<|im_end|>\n" -}}
-{%- elif tools is iterable and tools | length > 0 -%}
+{%- if tools is iterable and tools | length > 0 and not (loop_messages and loop_messages[0]["role"] == "system") -%}
 	{{- "<|im_end|>\n" -}}
 {%- endif -%}
+
 {%- for message in loop_messages -%}
 	{%- if message.role == "assistant" -%}
 		{#  Add reasoning content in to content field for unified processing below.  #}
@@ -166,7 +160,56 @@
 	{%- elif message.role == "user" or message.role == "system" -%}
 		{{- "<|im_start|>" + message.role + "\n" -}}
 		{%- set content = message.content | string -%}
-		{{- content -}}
+
+		{#  If the first message is system, append tools to THAT system message instead of prepending.  #}
+		{%- if message.role == "system" and loop.index0 == 0 and tools is iterable and tools | length > 0 and not ns.tools_rendered -%}
+			{{- content -}}
+			{{- "\n\n# Tools\n\nYou have access to the following functions:\n\n" -}}
+			{{- "<tools>" -}}
+			{%- for tool in tools -%}
+				{%- if tool.function is defined -%}
+					{%- set tool = tool.function -%}
+				{%- endif -%}
+				{{- "\n<function>\n<name>" ~ tool.name ~ "</name>" -}}
+				{%- if tool.description is defined -%}
+					{{- "\n<description>" ~ tool.description | trim ~ "</description>" -}}
+				{%- endif -%}
+				{{- "\n<parameters>" -}}
+				{%- if tool.parameters is defined and tool.parameters is mapping and tool.parameters.properties is defined and tool.parameters.properties is mapping -%}
+					{%- for (param_name, param_fields) in tool.parameters.properties | items -%}
+						{{- "\n<parameter>" -}}
+						{{- "\n<name>" ~ param_name ~ "</name>" -}}
+						{%- if param_fields.type is defined -%}
+							{{- "\n<type>" ~ param_fields.type | string ~ "</type>" -}}
+						{%- endif -%}
+						{%- if param_fields.description is defined -%}
+							{{- "\n<description>" ~ param_fields.description | trim ~ "</description>" -}}
+						{%- endif -%}
+						{%- if param_fields.enum is defined -%}
+							{{- "\n<enum>" ~ param_fields.enum | tojson | safe ~ "</enum>" -}}
+						{%- endif -%}
+						{%- set handled_keys = ["name", "type", "description", "enum"] -%}
+						{{- render_extra_keys(param_fields, handled_keys) -}}
+						{{- "\n</parameter>" -}}
+					{%- endfor -%}
+				{%- endif -%}
+				{%- set handled_keys = ["type", "properties", "required"] -%}
+				{{- render_extra_keys(tool.parameters, handled_keys) -}}
+				{%- if tool.parameters is defined and tool.parameters.required is defined -%}
+					{{- "\n<required>" ~ tool.parameters.required | tojson | safe ~ "</required>" -}}
+				{%- endif -%}
+				{{- "\n</parameters>" -}}
+				{%- set handled_keys = ["type", "name", "description", "parameters"] -%}
+				{{- render_extra_keys(tool, handled_keys) -}}
+				{{- "\n</function>" -}}
+			{%- endfor -%}
+			{{- "\n</tools>" -}}
+			{{- "\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT>" -}}
+			{%- set ns.tools_rendered = true -%}
+		{%- else -%}
+			{{- content -}}
+		{%- endif -%}
+
 		{{- "<|im_end|>\n" -}}
 	{%- elif message.role == "tool" -%}
 		{%- if loop.previtem and loop.previtem.role != "tool" -%}
