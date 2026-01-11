@@ -1,0 +1,98 @@
+gptoss-20b:
+  train_prefixes:
+    - ""
+    - "<|startoftext|>"
+  train_params:
+    C: 5.0e-3
+    add_scaling: false
+  test_prefix: |-
+    <|startoftext|><|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.
+    Knowledge cutoff: 2024-06
+    Current date: 2025-12-31
+
+    Reasoning: medium
+
+    # Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>
+  test_seperators:
+    # For untagged conversations, # lbs between roles (set it to match the true instruct format, min 1 lb to prevent toks which span multiple roles)
+    # gpt-oss_*: there are no newlines between roles - add one to prevent cross-role toks
+    untagged_role_sep: "\n"
+    # For untagged conversations, # lbs between test_prefix and user text (set it to match the true instruct format)
+    # gpt-oss_*: there are no newlines between the test_prefix (system prompt) and the user text 
+    untagged_start_sep: " "
+    # For tagged conversations, # lbs between the test prefix and user role (including XML tags belonging to the role)
+    # gpt-oss_*: there are no newlines between the test_prefix (system prompt) and the first user role tags
+    tagged_start_sep: " "
+    # Note there is no tagged_role_sep since the render_single_* outputs should already be concatenatable without extra lbs
+
+gptoss-120b:
+  train_prefixes:
+    - ""
+    - "<|startoftext|>"
+  train_params:
+    C: 5.0e-3
+    add_scaling: false
+  test_prefix: |-
+    <|startoftext|><|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.
+    Knowledge cutoff: 2024-06
+    Current date: 2025-12-31
+
+    Reasoning: medium
+
+    # Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>
+  test_seperators:
+    untagged_role_sep: "\n"
+    untagged_start_sep: " "
+    tagged_start_sep: " "
+
+nemotron-3-nano: 
+  train_prefixes:
+    - ""
+    - "<s>"
+  train_params:
+    C: 1.0e0,
+    add_scaling: false
+  test_prefix: |-
+    <s><|im_start|>system
+    <|im_end|>
+  test_seperators:
+    untagged_role_sep: "\n\n"
+    untagged_start_sep: "\n"
+    tagged_start_sep: "\n" # Previously ""
+
+glm-4.6v-flash':
+  train_params:
+    C: 1.0e-1
+    add_scaling: false
+  test_prefix: |-
+    [gMASK]<sop>
+  test_seperators:
+    untagged_role_sep: "\n"
+    untagged_start_sep: "\n"
+    tagged_start_sep: " "
+
+
+apriel-1.6-15b-thinker: 
+  train_params:
+    C: 1.0e-1,
+    add_scaling: false
+  untagged_role_sep: "\n\n"
+  untagged_start_sep: "\n"
+  tagged_start_sep: " "
+
+olmo3-7b-think: 
+  train_params:
+    C: 1.0e-1,
+    add_scaling: false
+  untagged_role_sep: "\n\n"
+  untagged_start_sep: "\n"
+  tagged_start_sep: " "
+
+lfm2.5-1.2b:
+  train_params:
+    C: 1.0e-1
+    add_scaling: false
+  test_seperators:
+    untagged_role_sep: "\n\n"
+    untagged_start_sep: "\n"
+    tagged_start_sep: " "
