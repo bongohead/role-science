@@ -228,14 +228,21 @@ def load_chat_template(parent_dir, model_prefix) -> str:
         These are modified for consistency such that for all models:
         - There's no default system prompt
         - No BOS token by default
-        - Thinking tags aren't stripped (for reasoning models)
-        - 
+        - Previous thoughts aren't stripped (for reasoning models), and follow the exact same format as "current thought"
+        - Previous thoughts can be passed into assistant roles via `{"role": "assistant", "content": "<think>xx</think>yyy"}` -> sometimes this requires 
+          the CoT to be reformatted (e.g., linebreaks) to match the proper "current thought" format
+          
     
     Notes:
         - For GPT-OSS, this:
-            (1) removes the default system prompt;
-            (2) has {"role": "system", "content", "..."} propagate to the system prompt instead of the developer prompt;
-            (3) supports passing <think> directly (instead of a separate thinking key as in https://huggingface.co/spaces/huggingfacejs/chat-template-playground?modelId=openai%2Fgpt-oss-20b&example=hello-world).
+            1. Removes the default system prompt
+            2. Has {"role": "system", "content", "..."} propagate to the system prompt instead of the developer prompt;
+            3. Supports passing <think> directly (instead of a separate thinking key as in https://huggingface.co/spaces/huggingfacejs/chat-template-playground?modelId=openai%2Fgpt-oss-20b&example=hello-world).
+        - For Nemotron-3-Nano:
+            1. Preserves old thinks
+            2. Prevents reformatting for old thinks
+            3. Allows passing in <think> into the assistant cot -> reformats to <think>\n...\n</think>
+
         - For GLM4, this does not; it's just the standard chat template.
             (1) removes the [gMASK]<sop> prefix
         - For LFM.5-1.2b:

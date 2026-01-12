@@ -88,42 +88,36 @@
 {%- for message in loop_messages -%}
 	{%- if message.role == "assistant" -%}
 		{#  Add reasoning content in to content field for unified processing below.  #}
+		{#  Below block changed to allow <think> mapping to correct think format.  #}
+		{%- set msg_text = message.content | default(message.message, true) | default("", true) -%}
+
 		{%- if message.reasoning_content is defined and message.reasoning_content is string and message.reasoning_content | trim | length > 0 -%}
-			{%- set content = "<think>\n" ~ message.reasoning_content ~ "\n</think>\n" ~ message.content | default("", true) -%}
+			{%- set content = "<think>\n" ~ message.reasoning_content ~ "\n</think>\n" ~ msg_text -%}
 		{%- else -%}
-			{%- set content = message.content | default("", true) -%}
+			{%- set content = msg_text -%}
 			{%- if content is string -%}
-				{#  Allow downstream logic to to take care of broken thought, only handle coherent reasoning here.  #}
-				{%- if "<think>" not in content and "</think>" not in content -%}
-					{%- set content = "<think></think>" ~ content -%}
+				{#  Normalize inline <think>...</think> to multiline style.  #}
+				{%- if "<think>" in content and "</think>" in content -%}
+					{%- set pre = content.split("<think>")[0] -%}
+					{%- set tail = content.split("<think>")[1] -%}
+					{%- set think_body = tail.split("</think>")[0] -%}
+					{%- set post = tail.split("</think>")[1] -%}
+					{%- set content = pre ~ "<think>\n" ~ (think_body | trim) ~ "\n</think>\n" ~ post -%}
+				{%- elif "<think>" not in content and "</think>" not in content -%}
+					{#  Ensure every assistant turn has an explicit think wrapper, in multiline style.  #}
+					{%- set content = "<think>\n</think>\n" ~ content -%}
 				{%- endif -%}
-			{%- else -%}
-				{%- set content = content -%}
 			{%- endif -%}
 		{%- endif -%}
+		
+
 		{%- if message.tool_calls is defined and message.tool_calls is iterable and message.tool_calls | length > 0 -%}
 			{#  Assistant message has tool calls.  #}
 			{{- "<|im_start|>assistant\n" -}}
-			{%- set include_content = not (truncate_history_thinking and loop.index0 < ns.last_user_idx) -%}
 			{%- if content is string and content | trim | length > 0 -%}
-				{%- if include_content -%}
-					{{- content | trim ~ "\n" -}}
-				{%- else -%}
-					{%- set c = content | string -%}
-					{%- if "</think>" in c -%}
-						{#  Keep only content after the last closing think. Also generation prompt causes this.  #}
-						{%- set c = c.split("</think>")[-1] -%}
-					{%- elif "<think>" in c -%}
-						{#  If <think> was opened but never closed, drop the trailing think segment  #}
-						{%- set c = c.split("<think>")[0] -%}
-					{%- endif -%}
-					{%- set c = "<think></think>" ~ c | trim -%}
-					{%- if c | length > 0 -%}
-						{{- c ~ "\n" -}}
-					{%- endif -%}
-				{%- endif -%}
+				{{- content | trim ~ "\n" -}}
 			{%- else -%}
-				{{- "<think></think>" -}}
+				{{- "<think>\n</think>\n" -}}
 			{%- endif -%}
 			{%- for tool_call in message.tool_calls -%}
 				{%- if tool_call.function is defined -%}
@@ -142,21 +136,14 @@
 			{{- "<|im_end|>\n" -}}
 		{%- else -%}
 			{#  Assistant message doesn't have tool calls.  #}
-			{%- if not (truncate_history_thinking and loop.index0 < ns.last_user_idx) -%}
-				{{- "<|im_start|>assistant\n" ~ content | default("", true) | string | trim ~ "<|im_end|>\n" -}}
+			{%- set c = content | default("", true) | string | trim -%}
+			{%- if c | length > 0 -%}
+				{{- "<|im_start|>assistant\n" ~ c ~ "<|im_end|>\n" -}}
 			{%- else -%}
-				{%- set c = content | default("", true) | string -%}
-				{%- if "<think>" in c and "</think>" in c -%}
-					{%- set c = "<think></think>" ~ c.split("</think>")[-1] -%}
-				{%- endif -%}
-				{%- set c = c | trim -%}
-				{%- if c | length > 0 -%}
-					{{- "<|im_start|>assistant\n" ~ c ~ "<|im_end|>\n" -}}
-				{%- else -%}
-					{{- "<|im_start|>assistant\n<|im_end|>\n" -}}
-				{%- endif -%}
+				{{- "<|im_start|>assistant\n<|im_end|>\n" -}}
 			{%- endif -%}
 		{%- endif -%}
+
 	{%- elif message.role == "user" or message.role == "system" -%}
 		{{- "<|im_start|>" + message.role + "\n" -}}
 		{%- set content = message.content | string -%}

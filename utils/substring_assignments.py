@@ -28,6 +28,7 @@ def flag_message_types(sample_level_df: pd.DataFrame, base_messages: list[str], 
               then " dog" will be included too.
             - Be careful to AVOID base_messages which are overlapping ("Sure, here is ", "Sure, here is a detailed answer:"): these means that 
               matches can be ambiguous, which raises a ValueError unless allow_ambiguous=True.
+            - Be careful with allow_ambiguous=True: it matches the first role, which is usually the opposite of what's desired with consecutive messages!
 
     Params:
         @sample_level_df: A token-level dataframe with columns for `prompt_ix`, `token_ix` (ordering within prompt), `token` (string token)
