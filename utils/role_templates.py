@@ -69,13 +69,15 @@ def render_single_apriel(role, content):
     if role == 'system':
         return f"<|begin_system|>\n{content}\n"
     elif role == 'user':
-        return f"<|begin_user|>\n{content}\n"
+        return f"<|begin_user|>\n{content}"
     elif role == 'cot':
-        return f"<|begin_assistant|>\nHere are my reasoning steps:\n{content}\n<|end|>"
+        return f"\n<|begin_assistant|>\nHere are my reasoning steps:\n{content}\n<|end|>\n"
     elif role == 'assistant':
-        return f"<|begin_assistant|>\n[BEGIN FINAL RESPONSE]\n{content}\n<|end|>"
+        return f"\n<|begin_assistant|>\n[BEGIN FINAL RESPONSE]\n{content}\n<|end|>"
     elif role == 'tool':
-        return f"<|begin_tool_result|>\n{content}\n\n\n"
+        return f"<|begin_tool_result|>\n{content}\n\n"
+    else:
+        raise ValueError("Invalid role!")
     
 def render_single_olmo3(role: str, content: str) -> str:
     """
@@ -182,7 +184,7 @@ def render_single_message(model_prefix, role, content, tool_name = None) -> str:
         res = render_single_nemotron3(role, content)
     elif model_prefix in ['glm-4.6v-flash']:
         res = render_single_glm4(role, content)
-    elif model_prefix in ['apriel-1.6b-thinker']:
+    elif model_prefix in ['apriel-1.6-15b-thinker']:
         res = render_single_apriel(role, content)
     elif model_prefix in ['olmo3-7b-think']:
         res = render_single_olmo3(role, content)
@@ -211,8 +213,8 @@ def render_mixed_cot(model_prefix, cot, assistant) -> str:
         return f"<|im_start|>assistant\n<think>\n{cot}\n</think>\n{assistant}<|im_end|>\n"
     elif model_prefix in ['glm-4.6v-flash']:
         return f"<|assistant|>\n<think>{cot}</think>\n{assistant}"
-    elif model_prefix in ['apriel-1.6b-thinker']:
-        return f"<|begin_assistant|>\nHere are my reasoning steps:\n{cot}\n[BEGIN FINAL RESPONSE]\n{assistant}\n<|end|>\n"
+    elif model_prefix in ['apriel-1.6-15b-thinker']:
+        return f"\n<|begin_assistant|>\nHere are my reasoning steps:\n{cot}\n[BEGIN FINAL RESPONSE]\n{assistant}\n<|end|>\n"
     elif model_prefix in ['olmo3-7b-think']:
         return f"<|im_start|>assistant\n<think>{cot}</think>{assistant}<|im_end|>\n"
     else:
@@ -242,16 +244,16 @@ def load_chat_template(parent_dir, model_prefix) -> str:
             1. Preserves old thinks
             2. Prevents reformatting for old thinks
             3. Allows passing in <think> into the assistant cot -> reformats to <think>\n...\n</think>
-
-        - For GLM4, this does not; it's just the standard chat template.
-            (1) removes the [gMASK]<sop> prefix
+        - For GLM4:
+            1. Removes the [gMASK]<sop> prefix
+            2. Allows passing in <think> directly
+        - For Apriel, this:
+            (1) Removes the default system prompt
         - For LFM.5-1.2b:
             (1) Retains old thinks (not a reasoning model, so irrelevant)
             (2) Removes BOS token
         - For Olmo3, this:
             (1) does nothing, it's just the base template
-        - For Apriel, this:
-            (1) removes the default system prompt
         - For Qwen, this:
             (1) prevents old <think></think> tags from being stripped.
 
@@ -260,15 +262,14 @@ def load_chat_template(parent_dir, model_prefix) -> str:
         instruct_format = 'gptoss'
     elif model_prefix in ['nemotron-3-nano']:
         instruct_format = 'nemotron'
-    elif model_prefix in ['glm-46v-flash']:
+    elif model_prefix in ['glm-4.6v-flash']:
         instruct_format = 'glm4'
-    elif model_prefix in ['apriel-1.6b-thinker']:
+    elif model_prefix in ['apriel-1.6-15b-thinker']:
         instruct_format = 'apriel'
     elif model_prefix in ['olmo3-7b-think']:
         instruct_format = 'olmo3'
     elif model_prefix in ['lfm2.5-1.2b']:
         instruct_format = 'lfm2'
-
     else:
         raise ValueError(f"Model prefix {model_prefix} not supported")
 
