@@ -9,9 +9,9 @@
 
 1. [Introduction](#1-introduction)
 2. [Initial setup](#2-initial-setup)
+3. [Run role-space analysis](#3-run-role-space-analysis)
 3. [Run CoT Forgery attacks in user prompts](#3-run-cot-forgery-attacks-in-user-prompts)
 4. [Run CoT Forgery attacks in agents](#4-run-cot-forgery-attacks-in-agents)
-5. [Run role-space analysis](#5-run-role-space-analysis)
 6. [Run prompt injection role analysis](#5-run-prompt-injection-role-analysis)
 
 ## 1. Introduction
@@ -25,9 +25,62 @@ This repo contains code for replicating the evaluations and the mechanistic role
 
 ## 2. Initial setup
 1. **Clone repo on GPU server**: For exact replication of the role probe results, a Nvidia H-class GPU is necessary in order to support using MXFP4 experts on `gpt-oss-*` models.
-2. **Set up dependencies**: Run `bash setup_python.sh` to set up the Python dependencies. The dependencies are frozen using latest versions of most packages as of Jan 2026; key dependencies are CUDA 12, torch 3.9, and transformers v4.57.3. Adjust this file if needed.
+2. **Set up dependencies**: Run `bash setup_python.sh` to set up the Python dependencies. 
+  - Dependencies are frozen using latest versions of most packages as of Jan 2026; key dependencies are CUDA 12.8, torch==3.9.1, and transformers v4.57.3 (inference for GLM-4.6V-Flash using transformers v5.0.0).
 3. **(Optional) Set up visualization dependencies**: Run `bash setup_r.sh` to set up R; this is optional and only utilized for graphing and visualization.
 4. **Add env variables**: Create a `.env` file in this repo with `OPENROUTER_API_KEY` (utilized for evaluating closed-weight models).
+
+## 3. Run role-space analysis
+The below notebooks perform the causal mechanistic analysis to let us understand what models internally think the role of each token is. Supports multiple different models, including gpt-oss-* models, Nemotron-3-Nano-30B-A3B, GLM-4.6V-Flash, and Apriel-1.6-15B-Thinker.
+<p align="center">
+  <img src="docs/cotness-phase-portrait-alt-tags.png">
+</p>
+Run the notebooks in this section to: (1) generate model-specific conversational data; (2) train and validate **role probes**; (3) conduct role-space visualizations and analyses.
+
+1. **Generate model-specific data**
+    - **🚀 Run**: `role-analysis/01-get-conversations-data.ipynb`
+    - <details><summary>Description</summary>
+      
+      **📚 Description**: This generates conversational datasets for each model, used later for evaluating validity of role probes. This takes user messages from toxicchat/oasst, then generates
+      model-specific assistant responses using Openrouter. Allows for running models locally as a fallback if unavailable via API.
+ 
+      **↗️ Output**: Model-specific conversations data stored in `role-analysis/convs/{model_name}.csv`.
+      </details>
+
+2. **Train role-space probes**
+    - **🚀 Run**: `role-analysis/02-train-role-probes.ipynb`
+    - <details><summary>Description</summary>
+      
+      **📚 Description**: Runs the full end-to-end role probe training methodology, then validates them on conversations from `role-analysis/01-get-conversations-data.ipynb`.
+      
+      **📥 Input**: outputs from `role-analysis/01-get-conversations-data.ipynb`
+      
+      **↗️ Output**: `role-analysis/probes/{model_name}.pkl` containing the trained probes, and various `role-analysis/probes/*.csv` files containing probe metadata for analysis.
+      </details>
+
+3. **Project different texts attacks into role space**
+    - **🚀 Run**: `role-analysis/03-project-text-to-roles.ipynb`
+    - <details><summary>Description</summary>
+      
+      **📚 Description**: Uses the probes to analyze how different text is projected into role space.
+      
+      **📥 Input**: outputs from `02-train-role-probes.ipynb`.
+      
+      **↗️ Output**: `role-analysis/exports/*` containing dumped results.
+      </details>
+
+4. **(Optional) Visualize results**
+    - **🚀 Run**: `role-analysis/04-plot-text-projections.ipynb`
+    - <details><summary>Description</summary>
+      
+      **📚 Description**: Plots results.
+      
+      **📥 Input**: outputs from `03-project-text-to-roles.ipynb`
+      
+      **↗️ Output**: `role-analysis/plots/*` containing visualizations.
+      </details>
+
+
 
 ## 3. Run CoT Forgery attacks in user prompts
 This runs and evaluates the CoT Forgery prompts on a variety of local and closed-weight models.
@@ -114,55 +167,6 @@ Run the notebooks in this section to: (1) run CoT Forgery prompt injection on lo
       **↗️ Output**: `tool-injections/plots/*` containing visualizations.
       </details>
 
-
-## 5. Run role-space analysis
-The below notebooks perform the causal mechanistic analysis to let us understand what the model "thinks" the correct role assigned to each token is.
-<p align="center">
-  <img src="docs/cotness-phase-portrait-alt-tags.png">
-</p>
-Run the notebooks in this section to: (1) create role probe training data; (2-3) generate activations from the CoT Forgery prompts + generations in the previous section; (4) train role probes; (5) use them to project the CoT Forgery prompts into role space; (6) visualize results.
-
-1. **Generate role probe training data**
-    - **🚀 Run**: `role-analysis/01-export-c4-activations.ipynb`
-    - <details><summary>Description</summary>
-      
-      **📚 Description**: Takes a variety of SFT-style text from the C4 and HPLT datasets, then places them within role tags, runs forward passes, and exports layer-by-layer activations for either of the `gpt-oss-*` models.
-      
-      **↗️ Output**: Activations and related token-mapping metadata stored in `activations/{model_name}`.
-      </details>
-
-2. **Train role-space probes**
-    - **🚀 Run**: `role-analysis/02-train-role-probes.ipynb`
-    - <details><summary>Description</summary>
-      
-      **📚 Description**: Trains the role-space probes.
-      
-      **📥 Input**: outputs from `01-export-c4-activations.ipynb`
-      
-      **↗️ Output**: `role-analysis/probes/*` containing the trained probes.
-      </details>
-
-3. **Project different texts attacks into role space**
-    - **🚀 Run**: `role-analysis/03-project-text-to-roles.ipynb`
-    - <details><summary>Description</summary>
-      
-      **📚 Description**: Uses the probes to analyze how different text is projected into role space.
-      
-      **📥 Input**: outputs from `02-train-role-probes.ipynb`.
-      
-      **↗️ Output**: `role-analysis/exports/*` containing dumped results.
-      </details>
-
-4. **(Optional) Visualize results**
-    - **🚀 Run**: `role-analysis/04-plot-text-projections.ipynb`
-    - <details><summary>Description</summary>
-      
-      **📚 Description**: Plots results.
-      
-      **📥 Input**: outputs from `03-project-text-to-roles.ipynb`
-      
-      **↗️ Output**: `role-analysis/plots/*` containing visualizations.
-      </details>
 
 ## 6. Run prompt injection role analysis
 The below notebooks perform the causal mechanistic analysis using the probes trained in the previous section, but now to analyze the prompt injections from sections 3-4.

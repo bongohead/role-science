@@ -1,7 +1,12 @@
+# This file contains training probe training + eval setting for each model.
+
 gptoss-20b:
+  n_sample_size: 400
+  seq_len: 1024
   train_prefixes:
     - ""
     - "<|startoftext|>"
+    - "<|startoftext|><|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2025-12-31\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>"
   train_params:
     C: 5.0e-3
     add_scaling: false
@@ -26,9 +31,12 @@ gptoss-20b:
     # Note there is no tagged_role_sep since the render_single_* outputs should already be concatenatable without extra lbs
 
 gptoss-120b:
+  n_sample_size: 400
+  seq_len: 1024
   train_prefixes:
     - ""
     - "<|startoftext|>"
+    - "<|startoftext|><|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2025-12-31\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>"
   train_params:
     C: 5.0e-3
     add_scaling: false
@@ -45,22 +53,30 @@ gptoss-120b:
     untagged_start_sep: " "
     tagged_start_sep: " "
 
-nemotron-3-nano: 
+nemotron-3-nano:
+  n_sample_size: 250
+  seq_len: 1024
   train_prefixes:
     - ""
     - "<s>"
+    - "<s><|im_start|>system\n<|im_end|>\n"
   train_params:
-    C: 1.0e0,
+    C: 1.0e1
     add_scaling: false
   test_prefix: |-
     <s><|im_start|>system
     <|im_end|>
   test_seperators:
     untagged_role_sep: "\n\n"
-    untagged_start_sep: "\n"
-    tagged_start_sep: "\n" # Previously ""
+    untagged_start_sep: "\n\n"
+    tagged_start_sep: "\n"
 
 glm-4.6v-flash':
+  n_sample_size: 250
+  seq_len: 1024
+  train_prefixes:
+    - ""
+    - "[gMASK]<sop>"
   train_params:
     C: 1.0e-1
     add_scaling: false
@@ -71,28 +87,51 @@ glm-4.6v-flash':
     untagged_start_sep: "\n"
     tagged_start_sep: " "
 
-
 apriel-1.6-15b-thinker: 
+  n_sample_size: 250
+  seq_len: 768
+  train_prefixes:
+    - ""
+    - "<s>"
+    - "<|begin_system|>\nYou are a thoughtful, systematic AI assistant from ServiceNow Language Models (SLAM) lab. Analyze each question carefully, present your reasoning step-by-step, then provide the final response after the marker [BEGIN FINAL RESPONSE].\n"
   train_params:
-    C: 1.0e-1,
+    C: 1.0e-2
     add_scaling: false
-  untagged_role_sep: "\n\n"
-  untagged_start_sep: "\n"
-  tagged_start_sep: " "
+  test_prefix: |-
+    <s><|begin_system|>
+    You are a thoughtful, systematic AI assistant from ServiceNow Language Models (SLAM) lab. Analyze each question carefully, present your reasoning step-by-step, then provide the final response after the marker [BEGIN FINAL RESPONSE].
+  test_seperators:
+    untagged_role_sep: "\n\n"
+    untagged_start_sep: "\n\n"
+    tagged_start_sep: "\n"
 
 olmo3-7b-think: 
-  train_params:
-    C: 1.0e-1,
-    add_scaling: false
-  untagged_role_sep: "\n\n"
-  untagged_start_sep: "\n"
-  tagged_start_sep: " "
-
-lfm2.5-1.2b:
+  n_sample_size: 250
+  seq_len: 1024
+  train_prefixes:
+    - ""
   train_params:
     C: 1.0e-1
     add_scaling: false
+  test_prefix: |-
+    <|endoftext|<|im_start|>system
+    You are a helpful AI assistant.<|im_end|>
   test_seperators:
     untagged_role_sep: "\n\n"
     untagged_start_sep: "\n"
-    tagged_start_sep: " "
+    tagged_start_sep: "\n"
+
+lfm2.5-1.2b:
+  n_sample_size: 250
+  seq_len: 1024
+  train_prefixes:
+    - ""
+  train_params:
+    C: 1.0e-1
+    add_scaling: false
+  test_prefix: |-
+    <|startoftext|>
+  test_seperators:
+    untagged_role_sep: "\n\n"
+    untagged_start_sep: "\n"
+    tagged_start_sep: "\n"
