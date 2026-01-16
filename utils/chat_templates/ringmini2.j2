@@ -1,0 +1,34 @@
+{%- for message in messages -%}
+	{%- set role = message["role"] | lower -%}
+	{%- if role == "user" -%}
+		{%- set role = "HUMAN" -%}
+	{%- endif -%}
+	{%- set role = role | upper -%}
+
+	{%- if role == "ASSISTANT" -%}
+		{%- set content = message["content"] -%}
+		{%- set reasoning_content = "" -%}
+
+		{# Parse inline <think>...</think> inside assistant content #}
+		{%- if content is string and "<think>" in content and "</think>" in content -%}
+			{%- set reasoning_content = content.split("</think>")[0].rstrip("\n").split("<think>")[-1].lstrip("\n") -%}
+			{%- set content = content.split("</think>")[-1].lstrip("\n") -%}
+		{%- endif -%}
+
+		{# Emit in canonical think format if we found reasoning_content; else passthrough #}
+		{{- "<role>ASSISTANT</role>" -}}
+		{%- if reasoning_content -%}
+			{{- "<think>\n" + reasoning_content.strip() + "\n</think>" -}}
+			{%- if content is string and content | length > 0 -%}
+				{{- "\n" + content -}}
+			{%- endif -%}
+		{%- else -%}
+			{{- content -}}
+		{%- endif -%}
+	{%- else -%}
+		{{- "<role>" + role + "</role>" + message["content"] -}}
+	{%- endif -%}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+	{{- "<role>ASSISTANT</role><think>\n" -}}
+{%- endif -%}

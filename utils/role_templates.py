@@ -58,7 +58,7 @@ def render_single_glm4(role: str, content: str) -> str:
     elif role == 'tool':
         # Tool OUTPUT (results). GLM-4.6 groups consecutive tool responses under <|observation|>.
         # For a single message helper we always include the prefix.
-        return f"<|observation|>\n<tool_response>\n{content}\n</tool_response>"
+        return f"<|observation|>\n<tool_response>\n{content}\n</tool_response>\n"
     else:
         raise ValueError("Invalid role!")
     
@@ -131,19 +131,6 @@ def render_single_qwen3(role: str, content: str) -> str:
     else:
         raise ValueError("Invalid role!")
     
-def render_single_rnj1(role, content):
-    """
-    Render for RNJ-1 format
-    """
-    if role == 'system':
-        return f"<|start_header_id|>system<|end_header_id|>\n{content}<|eot_id|>"
-    elif role == 'user':
-        return f"<|start_header_id|>user<|end_header_id|>\n{content}<|eot_id|>"
-    elif role == 'assistant':
-        return f"<|start_header_id|>assistant<|end_header_id|>\n{content}<|eot_id|>"
-    elif role == 'tool':
-        return f"<|start_header_id|>user<|end_header_id|>\n<tool_response>\n{content}\n</tool_response><|eot_id|>"
-
 def render_single_lfm25(role: str, content: str) -> str:
     """
     Render for LiquidAI LFM2.5 models
@@ -158,6 +145,40 @@ def render_single_lfm25(role: str, content: str) -> str:
     #     return f"<|im_start|>assistant\n<think>\n{content}\n</think><|im_end|>\n"
     elif role == "tool":
         return f"<|im_start|>tool\n{content}<|im_end|>\n"
+    else:
+        raise ValueError("Invalid role!")
+    
+def render_single_jamba_reasoning(role: str, content: str) -> str:
+    """
+    Wrap arbitrary text for the Jamba reasoning chat template.
+    """
+    if role == "system":
+        return f"<|im_start|>system\n{content}<|im_end|>\n"
+    elif role == "user":
+        return f"<|im_start|>user\n{content}<|im_end|>\n"
+    elif role == "assistant":
+        return f"<|im_start|>assistant\n{content}<|im_end|>\n"
+    elif role == "cot":
+        return f"<|im_start|>assistant\n<think>\n{content}\n</think>\n\n<|im_end|>\n"
+    elif role == "tool":
+        return f"<|im_start|>user\n<tool_response>\n{content}\n</tool_response><|im_end|>\n"
+    else:
+        raise ValueError("Invalid role!")
+    
+def render_single_ringmini2(role: str, content: str) -> str:
+    """
+    Wrap arbitrary text for the Ring-mini-2.0 reasoning chat template.
+    """
+    if role == "user":
+        return f"<role>HUMAN</role>{content}"
+    elif role == "system":
+        return f"<role>SYSTEM</role>{content}"
+    elif role == "assistant":
+        return f"<role>ASSISTANT</role>{content}"
+    elif role == "cot":
+        return f"<role>ASSISTANT</role>\n<think>\n{content}\n</think>"
+    elif role == "tool":
+        return f"<role>TOOL</role>{content}"
     else:
         raise ValueError("Invalid role!")
 
@@ -190,6 +211,10 @@ def render_single_message(model_prefix, role, content, tool_name = None) -> str:
         res = render_single_olmo3(role, content)
     elif model_prefix in ['lfm2.5-1.2b']:
         res = render_single_lfm25(role, content)
+    elif model_prefix in ['qwen3-30b-a3b']:
+        res = render_single_qwen3(role, content)
+    elif model_prefix in ['jamba-reasoning']:
+        res = render_single_jamba_reasoning(role, content)
     else:
         raise ValueError("Invalid model!")
 
@@ -211,12 +236,18 @@ def render_mixed_cot(model_prefix, cot, assistant) -> str:
         return f"<|start|>assistant<|channel|>analysis<|message|>{cot}<|end|><|start|>assistant<|channel|>final<|message|>{assistant}<|end|>"
     elif model_prefix in ['nemotron-3-nano']:
         return f"<|im_start|>assistant\n<think>\n{cot}\n</think>\n{assistant}<|im_end|>\n"
+    elif model_prefix in ['qwen3-30b-a3b']:
+        return f"<|im_start|>assistant\n<think>\n{cot}\n</think>\n\n{assistant}<|im_end|>\n"
     elif model_prefix in ['glm-4.6v-flash']:
         return f"<|assistant|>\n<think>{cot}</think>\n{assistant}"
     elif model_prefix in ['apriel-1.6-15b-thinker']:
         return f"\n<|begin_assistant|>\nHere are my reasoning steps:\n{cot}\n[BEGIN FINAL RESPONSE]\n{assistant}\n<|end|>\n"
     elif model_prefix in ['olmo3-7b-think']:
         return f"<|im_start|>assistant\n<think>{cot}</think>{assistant}<|im_end|>\n"
+    elif model_prefix in ['jamba-reasoning']:
+        return f"<|im_start|>assistant\n<think>\n{cot}\n</think>\n\n{assistant}<|im_end|>\n"
+    elif model_prefix in ['ring-mini-2.0']:
+        return f"<role>ASSISTANT</role><think>\n{cot}\n</think>\n{assistant}"
     else:
         raise ValueError("Invalid model!")
 
@@ -234,7 +265,7 @@ def load_chat_template(parent_dir, model_prefix) -> str:
         - Previous thoughts can be passed into assistant roles via `{"role": "assistant", "content": "<think>xx</think>yyy"}` -> sometimes this requires 
           the CoT to be reformatted (e.g., linebreaks) to match the proper "current thought" format
           
-    
+
     Notes:
         - For GPT-OSS, this:
             1. Removes the default system prompt
@@ -248,14 +279,16 @@ def load_chat_template(parent_dir, model_prefix) -> str:
             1. Removes the [gMASK]<sop> prefix
             2. Allows passing in <think> directly
         - For Apriel, this:
-            (1) Removes the default system prompt
+            1. Removes the default system prompt
         - For LFM.5-1.2b:
-            (1) Retains old thinks (not a reasoning model, so irrelevant)
-            (2) Removes BOS token
+            1. Retains old thinks (not a reasoning model, so irrelevant)
+            2. Removes BOS token
         - For Olmo3, this:
-            (1) does nothing, it's just the base template
+            1. Does nothing, it's just the base template
         - For Qwen, this:
-            (1) prevents old <think></think> tags from being stripped.
+            1. Preserves old thinks
+            2. Prevents reformatting for old thinks
+            3. Supports passing <think> directly
 
     """
     if model_prefix in ['gptoss-20b', 'gptoss-120b']:
@@ -270,6 +303,12 @@ def load_chat_template(parent_dir, model_prefix) -> str:
         instruct_format = 'olmo3'
     elif model_prefix in ['lfm2.5-1.2b']:
         instruct_format = 'lfm2'
+    elif model_prefix in ['qwen3-30b-a3b']: 
+        instruct_format = 'qwen3'
+    elif model_prefix in ['jamba-reasoning']: 
+        instruct_format = 'jamba'
+    elif model_prefix in ['ring-mini-2.0']: 
+        instruct_format = 'ringmini2'
     else:
         raise ValueError(f"Model prefix {model_prefix} not supported")
 
