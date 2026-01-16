@@ -62,9 +62,6 @@ def run_qwen3next_return_topk(model, input_ids, attention_mask, return_hidden_st
     all_expert_outputs = []
 
     for layer_ix, layer in enumerate(model.model.layers):
-        # --------------------
-        # Token mixer block
-        # --------------------
         residual = hidden_state
         hidden_state = layer.input_layernorm(hidden_state)
 
@@ -91,9 +88,6 @@ def run_qwen3next_return_topk(model, input_ids, attention_mask, return_hidden_st
 
         hidden_state = residual + hidden_state
 
-        # --------------------
-        # MLP / MoE block (we inline MoE to expose routing)
-        # --------------------
         residual = hidden_state
         hidden_state = layer.post_attention_layernorm(hidden_state)
 

@@ -130,24 +130,7 @@ def render_single_qwen3(role: str, content: str) -> str:
         return f"<|im_start|>user\n<tool_response>\n{content}\n</tool_response><|im_end|>\n"
     else:
         raise ValueError("Invalid role!")
-    
-def render_single_lfm25(role: str, content: str) -> str:
-    """
-    Render for LiquidAI LFM2.5 models
-    """
-    if role == "system":
-        return f"<|im_start|>system\n{content}<|im_end|>\n"
-    elif role == "user":
-        return f"<|im_start|>user\n{content}<|im_end|>\n"
-    elif role == "assistant":
-        return f"<|im_start|>assistant\n{content}<|im_end|>\n"
-    # elif role == "cot":
-    #     return f"<|im_start|>assistant\n<think>\n{content}\n</think><|im_end|>\n"
-    elif role == "tool":
-        return f"<|im_start|>tool\n{content}<|im_end|>\n"
-    else:
-        raise ValueError("Invalid role!")
-    
+        
 def render_single_jamba_reasoning(role: str, content: str) -> str:
     """
     Wrap arbitrary text for the Jamba reasoning chat template.
@@ -162,23 +145,6 @@ def render_single_jamba_reasoning(role: str, content: str) -> str:
         return f"<|im_start|>assistant\n<think>\n{content}\n</think>\n\n<|im_end|>\n"
     elif role == "tool":
         return f"<|im_start|>user\n<tool_response>\n{content}\n</tool_response><|im_end|>\n"
-    else:
-        raise ValueError("Invalid role!")
-    
-def render_single_ringmini2(role: str, content: str) -> str:
-    """
-    Wrap arbitrary text for the Ring-mini-2.0 reasoning chat template.
-    """
-    if role == "user":
-        return f"<role>HUMAN</role>{content}"
-    elif role == "system":
-        return f"<role>SYSTEM</role>{content}"
-    elif role == "assistant":
-        return f"<role>ASSISTANT</role>{content}"
-    elif role == "cot":
-        return f"<role>ASSISTANT</role>\n<think>\n{content}\n</think>"
-    elif role == "tool":
-        return f"<role>TOOL</role>{content}"
     else:
         raise ValueError("Invalid role!")
 
@@ -209,8 +175,6 @@ def render_single_message(model_prefix, role, content, tool_name = None) -> str:
         res = render_single_apriel(role, content)
     elif model_prefix in ['olmo3-7b-think']:
         res = render_single_olmo3(role, content)
-    elif model_prefix in ['lfm2.5-1.2b']:
-        res = render_single_lfm25(role, content)
     elif model_prefix in ['qwen3-30b-a3b']:
         res = render_single_qwen3(role, content)
     elif model_prefix in ['jamba-reasoning']:
@@ -246,8 +210,6 @@ def render_mixed_cot(model_prefix, cot, assistant) -> str:
         return f"<|im_start|>assistant\n<think>{cot}</think>{assistant}<|im_end|>\n"
     elif model_prefix in ['jamba-reasoning']:
         return f"<|im_start|>assistant\n<think>\n{cot}\n</think>\n\n{assistant}<|im_end|>\n"
-    elif model_prefix in ['ring-mini-2.0']:
-        return f"<role>ASSISTANT</role><think>\n{cot}\n</think>\n{assistant}"
     else:
         raise ValueError("Invalid model!")
 
@@ -280,11 +242,6 @@ def load_chat_template(parent_dir, model_prefix) -> str:
             2. Allows passing in <think> directly
         - For Apriel, this:
             1. Removes the default system prompt
-        - For LFM.5-1.2b:
-            1. Retains old thinks (not a reasoning model, so irrelevant)
-            2. Removes BOS token
-        - For Olmo3, this:
-            1. Does nothing, it's just the base template
         - For Qwen, this:
             1. Preserves old thinks
             2. Prevents reformatting for old thinks
@@ -301,14 +258,10 @@ def load_chat_template(parent_dir, model_prefix) -> str:
         instruct_format = 'apriel'
     elif model_prefix in ['olmo3-7b-think']:
         instruct_format = 'olmo3'
-    elif model_prefix in ['lfm2.5-1.2b']:
-        instruct_format = 'lfm2'
     elif model_prefix in ['qwen3-30b-a3b']: 
         instruct_format = 'qwen3'
     elif model_prefix in ['jamba-reasoning']: 
         instruct_format = 'jamba'
-    elif model_prefix in ['ring-mini-2.0']: 
-        instruct_format = 'ringmini2'
     else:
         raise ValueError(f"Model prefix {model_prefix} not supported")
 
@@ -317,3 +270,21 @@ def load_chat_template(parent_dir, model_prefix) -> str:
 
     return chat_template_str
     
+def fold_cot_into_final(convs):
+    """
+    Fold CoT into the following assistant message as a <think></think> tag.
+    """
+    result = []
+    for conv in convs:
+        new_conv = []
+        it = iter(enumerate(conv))
+        for i, msg in it:
+            if msg['role'] == 'cot':
+                if i + 1 >= len(conv) or conv[i + 1]['role'] != 'assistant':
+                    raise ValueError("cot must be followed by assistant")
+                _, next_msg = next(it)
+                new_conv.append({'role': 'assistant', 'content': f"<think>{msg['content']}</think>{next_msg['content']}"})
+            else:
+                new_conv.append({'role': msg['role'], 'content': msg['content']})
+        result.append(new_conv)
+    return result
