@@ -1,8 +1,9 @@
 # This file contains training probe training + eval setting for each model.
 
 gptoss-20b:
-  n_sample_size: 250
+  n_sample_size: 400
   seq_len: 1280
+  nested_reasoning: false
   train_prefixes:
     - ""
     # - "<|startoftext|>"
@@ -19,27 +20,28 @@ gptoss-20b:
 
     # Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>
   test_seperators:
-    # For untagged conversations, # lbs between roles (set it to match the true instruct format, min 1 lb to prevent toks which span multiple roles)
-    # gpt-oss_*: there are no newlines between roles - add one to prevent cross-role toks
-    untagged_role_sep: "\n"
+    # For untagged conversations, # lbs between roles (set it to match the true instruct format, - use 1 space if there are no lbs to prevent role mergnig)
+    # gpt-oss_*: there are no newlines between roles - add space to prevent cross-role toks
+    untagged_role_sep: " "
     # For untagged conversations, # lbs between test_prefix and user text (set it to match the true instruct format)
-    # gpt-oss_*: there are no newlines between the test_prefix (system prompt) and the user text 
+    # gpt-oss_*: there are no newlines between the test_prefix (system prompt) and the user text - add space to prevent cross-role toks
     untagged_start_sep: " "
     # For tagged conversations, # lbs between the test prefix and user role (including XML tags belonging to the role)
-    # gpt-oss_*: there are no newlines between the test_prefix (system prompt) and the first user role tags
+    # gpt-oss_*: there are no newlines between the test_prefix (system prompt) and the first user role tags - add space to prevent cross-role toks
     tagged_start_sep: " "
     # Note there is no tagged_role_sep since the render_single_* outputs should already be concatenatable without extra lbs
 
 gptoss-120b:
   n_sample_size: 250
   seq_len: 1280
+  nested_reasoning: false
   train_prefixes:
     - ""
     # - "<|startoftext|>"
     # - "<|startoftext|><|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2025-12-31\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>"
   train_params:
     C: 5.0e-3
-    add_scaling: false
+    add_scaling: true
   test_prefix: |-
     <|startoftext|><|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.
     Knowledge cutoff: 2024-06
@@ -49,19 +51,39 @@ gptoss-120b:
 
     # Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>
   test_seperators:
-    untagged_role_sep: "\n"
+    untagged_role_sep: " "
     untagged_start_sep: " "
     tagged_start_sep: " "
 
 nemotron-3-nano:
   n_sample_size: 250
   seq_len: 1024
+  nested_reasoning: true
   train_prefixes:
     - ""
     # - "<s>"
     # - "<s><|im_start|>system\n<|im_end|>\n"
   train_params:
-    C: 1.0e1
+    C: 1.0e+1
+    add_scaling: false
+  test_prefix: |-
+    <s><|im_start|>system
+    <|im_end|>
+  test_seperators:
+    untagged_role_sep: "\n\n"
+    untagged_start_sep: "\n\n"
+    tagged_start_sep: "\n"
+
+glm-4.5-air:
+  n_sample_size: 250
+  seq_len: 1024
+  nested_reasoning: true
+  train_prefixes:
+    - ""
+    # - "<s>"
+    # - "<s><|im_start|>system\n<|im_end|>\n"
+  train_params:
+    C: 1.0e-3
     add_scaling: false
   test_prefix: |-
     <s><|im_start|>system
@@ -74,6 +96,7 @@ nemotron-3-nano:
 glm-4.6v-flash:
   n_sample_size: 250
   seq_len: 1024
+  nested_reasoning: true
   train_prefixes:
     - ""
   train_params:
@@ -105,25 +128,15 @@ glm-4.6v-flash:
 qwen3-30b-a3b: 
   n_sample_size: 250
   seq_len: 1024
+  nested_reasoning: true
   train_prefixes:
     - ""
   train_params:
-    C: 0.5
+    C: 1.0e-1
     add_scaling: false
   test_prefix: |-
     <|im_start|>system
-    # Tools
-
-    You may call one or more functions to assist with the user query.
-
-    You are provided with function signatures within <tools></tools> XML tags:
-    <tools>
-    </tools>
-
-    For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:
-    <tool_call>
-    {"name": <function-name>, "arguments": <args-json-object>}
-    </tool_call><|im_end|>
+    <|im_end|>
   test_seperators:
     untagged_role_sep: "\n\n"
     untagged_start_sep: "\n\n"
@@ -132,6 +145,7 @@ qwen3-30b-a3b:
 jamba-reasoning: 
   n_sample_size: 250
   seq_len: 1024
+  nested_reasoning: true
   train_prefixes:
     - ""
   train_params:
@@ -147,6 +161,7 @@ jamba-reasoning:
 olmo3-7b-think: 
   n_sample_size: 250
   seq_len: 1024
+  nested_reasoning: true
   train_prefixes:
     - ""
   train_params:
@@ -162,7 +177,8 @@ olmo3-7b-think:
 
 apriel-1.6-15b-thinker: 
   n_sample_size: 250
-  seq_len: 512
+  seq_len: 1024
+  nested_reasoning: true
   train_prefixes:
     - ""
     # - "<s>"
@@ -173,21 +189,6 @@ apriel-1.6-15b-thinker:
   test_prefix: |-
     <s><|begin_system|>
     You are a thoughtful, systematic AI assistant from ServiceNow Language Models (SLAM) lab. Analyze each question carefully, present your reasoning step-by-step, then provide the final response after the marker [BEGIN FINAL RESPONSE].
-  test_seperators:
-    untagged_role_sep: "\n\n"
-    untagged_start_sep: "\n\n"
-    tagged_start_sep: "\n"
-
-lfm2.5-1.2b:
-  n_sample_size: 250
-  seq_len: 1024
-  train_prefixes:
-    - ""
-  train_params:
-    C: 1.0e-1
-    add_scaling: false
-  test_prefix: |-
-    <|startoftext|>
   test_seperators:
     untagged_role_sep: "\n\n"
     untagged_start_sep: "\n\n"
