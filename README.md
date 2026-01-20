@@ -1,5 +1,5 @@
 
-<h2 align="center">Policy over Values: Hacking LLM Thoughts via CoT Forgery</h2>
+<h2 align="center">How Prompt Injections Work</h2>
 <div align="center" style="line-height: 1;">
     <a href="">📑 ArXiv</a>
 </div>
@@ -15,87 +15,80 @@
 6. [Run prompt injection role analysis](#5-run-prompt-injection-role-analysis)
 
 ## 1. Introduction
-This repo contains code for <a href="">📑 Policy over Values: Hacking LLM Thoughts via CoT Forgery</a>. 
-
-*CoT Forgery* is a zero-shot black-box jailbreak that **exposes a learned behavioral flaw in reasoning-based safety**. Against **Deliberative Alignment (DA)**—responsible for state-of-the-art safety in OpenAI’s o-series and gpt-oss models—our attack achieves a near-total safety bypass, elevating harmful response rates on StrongREJECT from **0%** to **89%** (gpt-oss-20b), **95%** (gpt-oss-120b), and **79%** (o4-mini).
-
-We identify the causal mechanisms behind this failure as two DA-induced reward-hacking behaviors: (1) prioritization of **policy over values**, where models obey textual rules over ethical principles, and (2) **authority-by-format**, a form of role confusion where models mistake stylized user input for their own reasoning.
-
-This repo contains code for replicating the evaluations and the mechanistic role analysis to undersatnd the effect of authority-by-format.
+This repo contains replication code for the <a>How Prompt Injections Work</a> paper. 
 
 ## 2. Initial setup
-1. **Clone repo on GPU server**: For exact replication of the role probe results, a Nvidia H-class GPU is necessary in order to support using MXFP4 experts on `gpt-oss-*` models.
+1. **Clone repo on GPU server**: Code assumes CUDA GPU; all models and analyses fit on an H200 SXM.
 2. **Set up dependencies**: Run `bash setup_python.sh` to set up the Python dependencies. 
-  - Dependencies are frozen using latest versions of most packages as of Jan 2026; key dependencies are CUDA 12.8, torch==3.9.1, and transformers v4.57.3 (inference for GLM-4.6V-Flash using transformers v5.0.0).
-3. **(Optional) Set up visualization dependencies**: Run `bash setup_r.sh` to set up R; this is optional and only utilized for graphing and visualization.
+  - Dependencies frozen using latest versions of most packages as of Jan 2026; key dependencies are `CUDA 12.8`, `torch==3.9.1`, and `transformers==v4.57.5`.
+3. **(Optional) Set up visualization dependencies**: Run `bash setup_r.sh` to set up R; required for most analytics / visualization code.
 4. **Add env variables**: Create a `.env` file in this repo with `OPENROUTER_API_KEY` (utilized for evaluating closed-weight models).
 
 ## 3. Run role-space analysis
-The below notebooks perform the causal mechanistic analysis to let us understand what models internally think the role of each token is. Supports multiple different models, including gpt-oss-* models, Nemotron-3-Nano-30B-A3B, GLM-4.6V-Flash, and Apriel-1.6-15B-Thinker.
+This section analyzes models' internal role perception. Notebooks and outputs are model-specific; set model choice in code. Supported models: `gpt-oss-20b/120b`, `Nemotron-3-Nano`, `Qwen3-30B-A3B`, `Jamba-Reasoning-3B`, `Apriel-1.6-15b-Thinker`, `GLM-4.6V-Flash`.
+
 <p align="center">
   <img src="docs/cotness-phase-portrait-alt-tags.png">
 </p>
-Run the notebooks in this section to: (1) generate model-specific conversational data; (2) train and validate **role probes**; (3) conduct role-space visualizations and analyses.
+    
+Run notebooks to: (1) generate model-specific conversational data; (2) train and validate **role probes**; (3) conduct role-space visualizations and analyses.
 
-1. **Generate model-specific data**
+1. **Generate conversational data**
     - **🚀 Run**: `role-analysis/01-get-conversations-data.ipynb`
     - <details><summary>Description</summary>
       
-      **📚 Description**: This generates conversational datasets for each model, used later for evaluating validity of role probes. This takes user messages from toxicchat/oasst, then generates
-      model-specific assistant responses using Openrouter. Allows for running models locally as a fallback if unavailable via API.
+      **📚 Description**: Takes conversations from `toxicchat`/`oasst`, then regenerates LLM responses using Openrouter. Allows for running models locally as a fallback if unavailable via API.
  
-      **↗️ Output**: Model-specific conversations data stored in `role-analysis/convs/{model_name}.csv`.
+      **↗️ Output**: `convs/{model_name}.csv` (model-specific conversations)
       </details>
 
-2. **Train role-space probes**
+2. **Train and evaluate role-space probes**
     - **🚀 Run**: `role-analysis/02-train-role-probes.ipynb`
     - <details><summary>Description</summary>
       
-      **📚 Description**: Runs the full end-to-end role probe training methodology, then validates them on conversations from `role-analysis/01-get-conversations-data.ipynb`.
+      **📚 Description**: Runs the full end-to-end role probe training methodology for the selected model. Runs role-space projections on: (a) the conversations created earlier (runs tagged, untagged, and mistagged variants); and (b) the gardening conversation.
       
-      **📥 Input**: outputs from `role-analysis/01-get-conversations-data.ipynb`
+      **📥 Requires**: `01-get-conversations-data.ipynb`
       
-      **↗️ Output**: `role-analysis/probes/{model_name}.pkl` containing the trained probes, and various `role-analysis/probes/*.csv` files containing probe metadata for analysis.
+      **↗️ Output**: `outputs/probes/{model_name}.pkl` (trained probes), `outputs/probe-training/*.csv` (training diagnostic files), `outputs/probe-projections/*.csv` (role space projections) 
       </details>
 
-3. **Project different texts attacks into role space**
-    - **🚀 Run**: `role-analysis/03-project-text-to-roles.ipynb`
+3. **(Optional) Visualize conversation role space projection results**
+    - **🚀 Run**: `role-analysis/analyze-probes.ipynb`
     - <details><summary>Description</summary>
       
-      **📚 Description**: Uses the probes to analyze how different text is projected into role space.
+      **📚 Description**: Creates visuals and summary stats for the conversation role-space projections from (2).
       
-      **📥 Input**: outputs from `02-train-role-probes.ipynb`.
+      **📥 Requires**: `02-train-role-probes.ipynb`
       
-      **↗️ Output**: `role-analysis/exports/*` containing dumped results.
+      **↗️ Output**: `role-analysis/plots/*` (plots)
       </details>
 
-4. **(Optional) Visualize results**
-    - **🚀 Run**: `role-analysis/04-plot-text-projections.ipynb`
+3. **(Optional) Visualize gardening role space projection results**
+    - **🚀 Run**: `role-analysis/04-tomato-probe-results.ipynb`
     - <details><summary>Description</summary>
       
-      **📚 Description**: Plots results.
+      **📚 Description**: Creates visuals and summary stats for the gardening role-space projections from (2).
       
-      **📥 Input**: outputs from `03-project-text-to-roles.ipynb`
+      **📥 Requires**: `02-train-role-probes.ipynb`
       
-      **↗️ Output**: `role-analysis/plots/*` containing visualizations.
+      **↗️ Output**: `role-analysis/plots/*` (plots)
       </details>
-
-
 
 ## 3. Run CoT Forgery attacks in user prompts
-This runs and evaluates the CoT Forgery prompts on a variety of local and closed-weight models.
+This section runs and evaluates the CoT Forgery prompts on a variety of local and closed-weight models.
 <p align="center">
   <img src="docs/user-eval-result.png">
 </p>
-Run the notebooks in this section to: (1) generate the actual CoT Forgery jailbreak prompts; (2) run the attacks on locally-loaded `gpt-oss-*` model; (3) run the attacks on closed-weight models; and (4) create visualizations of the results. 
+Run notebooks to: (1) generate the actual CoT Forgery jailbreak prompts; (2) run the attacks on locally-loaded `gpt-oss-*` model; (3) run the attacks on closed-weight models; and (4) create visualizations of the results. 
 
 1. **Generate CoT Forgery jailbreak prompts**
     - **🚀 Run**: `user-injections/01-generate-policies.ipynb`
     - <details><summary>Description</summary>
       
-      **📚 Description**: Calls an LLM via OpenRouter to generate the CoT forgery prompts (as well as comparison baseline prompts) for each harmful question in StrongREJECT. Note that this does not yet run forward passes or generations.
+      **📚 Description**: Calls an LLM via OpenRouter to generate the CoT forgery prompts (as well as comparison baseline prompts) for each harmful question in StrongREJECT. Does not yet run forward passes or generations.
       
-      **↗️ Output**: `base-harmful-policies.csv` containing forged CoTs.
+      **↗️ Output**: `base-harmful-policies.csv` (forged CoTs)
       </details>
 
 2. **Run CoT Forgery attacks on local models**
@@ -104,9 +97,9 @@ Run the notebooks in this section to: (1) generate the actual CoT Forgery jailbr
       
       **📚 Description**: Runs CoT forgery plus baseline prompts on local models. Uses `gpt-oss-20b` / `gpt-oss-120b` locally with the model loaded at recommended settings (FA3 + MXFP4 experts). After generation, calls an LLM classifier via OpenRouter to classify jailbreak success.
       
-      **📥 Input**: outputs from `01-generate-policies.ipynb`.
+      **📥 Requires**: `01-generate-policies.ipynb`
       
-      **↗️ Output**: `base-harmful-responses-classified.csv` containing generated text and attack success classifications.
+      **↗️ Output**: `base-harmful-responses-classified.csv` (generated text and attack success classifications)
       </details>
 
 3. **Run CoT Forgery attacks on closed models**
@@ -115,9 +108,9 @@ Run the notebooks in this section to: (1) generate the actual CoT Forgery jailbr
       
       **📚 Description**: Runs CoT forgery plus baseline prompts on non-local models via OpenRouter. After generation, calls an LLM classifier via OpenRouter to classify attack success.
       
-      **📥 Input**: outputs from `01-generate-policies.ipynb`.
+      **📥 Requires**: `01-generate-policies.ipynb`
       
-      **↗️ Output**: `openrouter-generations/harmful-responses-classified.csv` containing generated text and jailbreak success classifications.
+      **↗️ Output**: `openrouter-generations/harmful-responses-classified.csv` (generated text and jailbreak success classifications)
       </details>
 
 4. **(Optional) Visualize results**
@@ -126,9 +119,9 @@ Run the notebooks in this section to: (1) generate the actual CoT Forgery jailbr
       
       **📚 Description**: Plots results.
       
-      **📥 Input**: outputs from `02-export-jailbreak-generations.ipynb` and `03-run-openrouter-generations.ipynb`.
+      **📥 Requires**: `02-export-jailbreak-generations.ipynb`, `03-run-openrouter-generations.ipynb`
       
-      **↗️ Output**: `user-injections/plots/*` containing visualizations.
+      **↗️ Output**: `user-injections/plots/*` (visualizations)
       </details>
 
 ## 4. Run CoT Forgery attacks in agents
@@ -144,7 +137,7 @@ Run the notebooks in this section to: (1) run CoT Forgery prompt injection on lo
       
       **📚 Description**: Sets up and runs prompt injection exfiltration attacks with locally loaded `gpt-oss-*` models, then classifies whether the exfiltration worked successfully.
       
-      **↗️ Output**: `local-agent-outputs-{model_name}-classified.csv` containing full ReAct loop outputs in every turn, plus final attack success classifications.
+      **↗️ Output**: `local-agent-outputs-{model_name}-classified.csv` (full ReAct loop transcripts with final attack success classifications)
       </details>
 
 2. **Run CoT Forgery attacks on closed-weight agents**
@@ -153,7 +146,7 @@ Run the notebooks in this section to: (1) run CoT Forgery prompt injection on lo
       
       **📚 Description**: Sets up and runs prompt injection exfiltration attacks with OpenAI-hosted models, then classifies whether the exfiltration worked successfully.
       
-      **↗️ Output**: `api-agents-output-classified.csv` containing full ReAct loop outputs in every turn, plus final attack success classifications.
+      **↗️ Output**: `api-agents-output-classified.csv` (full ReAct loop transcripts with final attack success classifications).
       </details>
 
 3. **(Optional) Visualize results**
@@ -162,18 +155,18 @@ Run the notebooks in this section to: (1) run CoT Forgery prompt injection on lo
       
       **📚 Description**: Plots results.
       
-      **📥 Input**: outputs from `01-run-injections-gpt-oss.ipynb` and `02-run-injections-openai.ipynb`.
+      **📥 Requires**:  `01-run-injections-gpt-oss.ipynb`, `02-run-injections-openai.ipynb`.
       
-      **↗️ Output**: `tool-injections/plots/*` containing visualizations.
+      **↗️ Output**: `tool-injections/plots/*` (visualizations)
       </details>
 
 
 ## 6. Run prompt injection role analysis
-The below notebooks perform the causal mechanistic analysis using the probes trained in the previous section, but now to analyze the prompt injections from sections 3-4.
+This section notebooks perform the causal mechanistic analysis using the probes trained in the previous section, but now to analyze the prompt injections from sections 3-4.
 <p align="center">
   <img src="docs/cotness-redteam.png">
 </p>
-Run the notebooks in this section to: (1-2) generate activations from the CoT Forgery prompts + generations in the previous section; (3) use the role probes; (4) visualize results.
+Run notebooks to: (1-2) generate activations from the CoT Forgery prompts + generations in the previous section; (3) use the role probes; (4) visualize results.
 
 1. **Generate activations from user Cot Forgery attacks**
     - **🚀 Run**: `role-injection-analysis/02-export-user-injection-activations.ipynb` 
@@ -181,9 +174,9 @@ Run the notebooks in this section to: (1-2) generate activations from the CoT Fo
       
       **📚 Description**: Takes the CoT Forgery results from the prior user-injection section and runs forward passes to export layer-by-layer activations for either of the `gpt-oss-*` models.
       
-      **📥 Input**: outputs from `user-injections/02-export-jailbreak-generations.ipynb`.
+      **📥 Requires**: `user-injections/02-export-jailbreak-generations.ipynb`
       
-      **↗️ Output**: Activations and related token-mapping metadata stored in `activations-redteam/{model_name}`.
+      **↗️ Output**: `activations-redteam/{model_name}` (activations and metadata)
       </details>
 
 2. **(Optional) Generate activations from agent Cot Forgery attacks**
@@ -192,9 +185,9 @@ Run the notebooks in this section to: (1-2) generate activations from the CoT Fo
       
       **📚 Description**: Takes the CoT Forgery results from the prior agent-injection section and runs forward passes to export layer-by-layer activations for either of the `gpt-oss-*` models. Skip this if you don't care about role space analysis of agent injections. 
       
-      **📥 Input**: outputs from `tool-injections/01-run-injections-gpt-oss.ipynb`
+      **📥 Requires**: `tool-injections/01-run-injections-gpt-oss.ipynb`
       
-      **↗️ Output**: Activations and related token-mapping metadata stored in `activations-agent/{model_name}`.
+      **↗️ Output**:`activations-agent/{model_name}` (activations and metadata)
       </details>
 
 3. **Project CoT Forgery attacks into role space**
@@ -203,9 +196,9 @@ Run the notebooks in this section to: (1-2) generate activations from the CoT Fo
       
       **📚 Description**: Uses the probes to conduct causal mech interp analysis on the CoT Forgery activations.
       
-      **📥 Input**: outputs from `role-analysis/02-train-role-probes.ipynb`, `01-export-user-injection-activations.ipynb`, and `02-export-agent-activations.ipynb` (optional, needed to conduct role analysis of agent injections).
+      **📥 Requires**: `role-analysis/02-train-role-probes.ipynb`, `01-export-user-injection-activations.ipynb`,  `02-export-agent-activations.ipynb` (for agent section)
       
-      **↗️ Output**: `role-injection-analysis/exports/*` containing dumped results.
+      **↗️ Output**: `role-injection-analysis/exports/*` (dumped results)
       </details>
 
 4. **(Optional) Visualize results**
@@ -214,7 +207,7 @@ Run the notebooks in this section to: (1-2) generate activations from the CoT Fo
       
       **📚 Description**: Plots results.
       
-      **📥 Input**: outputs from `02-project-role-probes.ipynb`
+      **📥 Requires**: `02-project-role-probes.ipynb`
       
-      **↗️ Output**: `role-injection-analysis/plots/*` containing visualizations.
+      **↗️ Output**: `role-injection-analysis/plots/*` (visualizations)
       </details>
