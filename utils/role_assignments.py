@@ -1,5 +1,5 @@
 """
-Helper functions to assign tokens to their roles
+Helper functions to assign tokens to their roles - these are largely LLM generated; they're validated carefully by checking token counts.
 """
 import pandas as pd
 import numpy as np

@@ -40,12 +40,7 @@ def render_single_nemotron3(role: str, content: str) -> str:
     
 def render_single_glm4(role: str, content: str) -> str:
     """
-    Render a single GLM-4 message segment.
-
-    Notes:
-      - Does NOT include the global '[gMASK]<sop>' prefix (add once per full prompt).
-      - 'cot' emits only a <think> block; 'assistant' emits an empty think + visible content.
-      - Tool OUTPUT is wrapped as an observation + <tool_response> block.
+    Wrap arbitrary text as a single GLM4 message
     """
     if role == 'system':
         return f"<|system|>\n{content}"
@@ -56,15 +51,13 @@ def render_single_glm4(role: str, content: str) -> str:
     elif role == 'assistant':
         return f"<|assistant|>\n<think></think>\n{content}"
     elif role == 'tool':
-        # Tool OUTPUT (results). GLM-4.6 groups consecutive tool responses under <|observation|>.
-        # For a single message helper we always include the prefix.
         return f"<|observation|>\n<tool_response>\n{content}\n</tool_response>\n"
     else:
         raise ValueError("Invalid role!")
     
 def render_single_apriel(role, content):
     """
-    Render for Apriel format
+    Wrap arbitrary text as a single Apriel-1.6 message
     """
     if role == 'system':
         return f"<|begin_system|>\n{content}\n"
@@ -81,18 +74,7 @@ def render_single_apriel(role, content):
     
 def render_single_olmo3(role: str, content: str) -> str:
     """
-    Wrap arbitrary text as a single Olmo-3 Think-style message.
-
-    Notes:
-      - Uses the Olmo-3 ChatML-style envelope:
-            <|im_start|>role\\n ... <|im_end|>
-      - 'assistant-cot' is rendered as an assistant message whose content
-        lives inside a <think>...</think> block only (no visible answer).
-      - 'assistant-final' is rendered as an assistant message with an empty
-        <think>...</think> stub followed by visible content, paralleling the
-        Qwen3 helper.
-      - 'tool' represents TOOL OUTPUT, which Olmo-3 encodes as an
-        `environment` role; we map your 'tool' role to that.
+    Wrap arbitrary text as a single Olmo3 message
     """
     if role == 'system':
         return f"<|im_start|>system\n{content}<|im_end|>\n"
@@ -109,12 +91,7 @@ def render_single_olmo3(role: str, content: str) -> str:
 
 def render_single_qwen3(role: str, content: str) -> str:
     """
-    Wrap arbitrary text as a single Qwen3Moe message.
-    Notes:
-      - 'cot' is rendered as an assistant message with a <think>...</think> block only.
-      - 'assistant' is rendered as an assistant message with visible content only.
-      - 'tool' represents TOOL OUTPUT, which Qwen3 wraps as a user turn containing a <tool_response>...</tool_response> block.
-        (The tool name is not used here; function *calls* are emitted from assistant messages via <tool_call>...</tool_call>.)
+    Wrap arbitrary text as a single Qwen3 message
     """
     if role == 'system':
         return f"<|im_start|>system\n{content}<|im_end|>\n"
@@ -126,7 +103,6 @@ def render_single_qwen3(role: str, content: str) -> str:
         return f"<|im_start|>assistant\n{content}<|im_end|>\n"
         # return f"<|im_start|>assistant\n<think>\n\n</think>\n\n{content}<|im_end|>\n"
     elif role == 'tool':
-        # Tool output fed back as a user message block
         return f"<|im_start|>user\n<tool_response>\n{content}\n</tool_response><|im_end|>\n"
     else:
         raise ValueError("Invalid role!")
@@ -247,28 +223,7 @@ def load_chat_template(parent_dir, model_prefix) -> str:
         - No BOS token by default
         - Previous thoughts aren't stripped (for reasoning models), and follow the exact same format as "current thought"
         - Previous thoughts can be passed into assistant roles via `{"role": "assistant", "content": "<think>xx</think>yyy"}` -> sometimes this requires 
-          the CoT to be reformatted (e.g., linebreaks) to match the proper "current thought" format
-          
-
-    Notes:
-        - For GPT-OSS, this:
-            1. Removes the default system prompt
-            2. Has {"role": "system", "content", "..."} propagate to the system prompt instead of the developer prompt;
-            3. Supports passing <think> directly (instead of a separate thinking key as in https://huggingface.co/spaces/huggingfacejs/chat-template-playground?modelId=openai%2Fgpt-oss-20b&example=hello-world).
-        - For Nemotron-3-Nano:
-            1. Preserves old thinks
-            2. Prevents reformatting for old thinks
-            3. Allows passing in <think> into the assistant cot -> reformats to <think>\n...\n</think>
-        - For GLM4:
-            1. Removes the [gMASK]<sop> prefix
-            2. Allows passing in <think> directly
-        - For Apriel, this:
-            1. Removes the default system prompt
-        - For Qwen, this:
-            1. Preserves old thinks
-            2. Prevents reformatting for old thinks
-            3. Supports passing <think> directly
-
+          the CoT to be reformatted (e.g., linebreaks) to match the proper "current thought" format          
     """
     if model_prefix in ['gptoss-20b', 'gptoss-120b']:
         instruct_format = 'gptoss'
