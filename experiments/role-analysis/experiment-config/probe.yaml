@@ -2,14 +2,12 @@
 
 gptoss-20b:
   n_sample_size: 400
-  seq_len: 1280
+  seq_len: 1024
   nested_reasoning: false
   train_prefixes:
     - ""
-    # - "<|startoftext|>"
-    # - "<|startoftext|><|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2025-12-31\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>"
   train_params:
-    C: 5.0e-3
+    C: 1.0e-3
     add_scaling: false
   test_prefix: |-
     <|startoftext|><|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.
@@ -33,12 +31,10 @@ gptoss-20b:
 
 gptoss-120b:
   n_sample_size: 250
-  seq_len: 1280
+  seq_len: 1024
   nested_reasoning: false
   train_prefixes:
     - ""
-    # - "<|startoftext|>"
-    # - "<|startoftext|><|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2025-12-31\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>"
   train_params:
     C: 5.0e-3
     add_scaling: true
@@ -61,8 +57,6 @@ nemotron-3-nano:
   nested_reasoning: true
   train_prefixes:
     - ""
-    # - "<s>"
-    # - "<s><|im_start|>system\n<|im_end|>\n"
   train_params:
     C: 1.0e+1
     add_scaling: false
@@ -80,14 +74,11 @@ glm-4.5-air:
   nested_reasoning: true
   train_prefixes:
     - ""
-    # - "<s>"
-    # - "<s><|im_start|>system\n<|im_end|>\n"
   train_params:
     C: 1.0e-3
     add_scaling: false
   test_prefix: |-
-    <s><|im_start|>system
-    <|im_end|>
+    [gMASK]<sop>
   test_seperators:
     untagged_role_sep: "\n\n"
     untagged_start_sep: "\n\n"
@@ -103,27 +94,28 @@ glm-4.6v-flash:
     C: 5.0e-4
     add_scaling: false
   test_prefix: |-
-    [gMASK]<sop><|system|>
-    # Tools
-    
-    You may call one or more functions to assist with the user query.
-    
-    You are provided with function signatures within <tools></tools> XML tags:
-    <tools>
-    </tools>
-
-    For each function call, output the function name and arguments within the following XML format:
-    <tool_call>{function-name}
-    <arg_key>{arg-key-1}</arg_key>
-    <arg_value>{arg-value-1}</arg_value>
-    <arg_key>{arg-key-2}</arg_key>
-    <arg_value>{arg-value-2}</arg_value>
-    ...
-    </tool_call>
+    [gMASK]<sop>
   test_seperators:
     untagged_role_sep: "\n\n"
     untagged_start_sep: "\n\n"
     tagged_start_sep: "\n"
+
+glm-4.7-flash:
+  n_sample_size: 250
+  seq_len: 1024
+  nested_reasoning: true
+  train_prefixes:
+    - ""
+  train_params:
+    C: 1.0e+1
+    add_scaling: false
+  test_prefix: |-
+    [gMASK]<sop><
+  test_seperators:
+    untagged_role_sep: " "
+    untagged_start_sep: " "
+    tagged_start_sep: " "
+
 
 qwen3-30b-a3b: 
   n_sample_size: 250
@@ -181,8 +173,6 @@ apriel-1.6-15b-thinker:
   nested_reasoning: true
   train_prefixes:
     - ""
-    # - "<s>"
-    # - "<|begin_system|>\nYou are a thoughtful, systematic AI assistant from ServiceNow Language Models (SLAM) lab. Analyze each question carefully, present your reasoning step-by-step, then provide the final response after the marker [BEGIN FINAL RESPONSE].\n"
   train_params:
     C: 1.0e-2
     add_scaling: false
