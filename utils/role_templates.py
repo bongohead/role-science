@@ -148,6 +148,24 @@ def render_single_jamba_reasoning(role: str, content: str) -> str:
     else:
         raise ValueError("Invalid role!")
 
+def render_single_glm47_flash(role: str, content: str) -> str:
+    """
+    Wrap arbitrary text for GLM-4.7-Flash.
+    """
+    if role == "system":
+        return f"<|system|>{content}"
+    elif role == "user":
+        return f"<|user|>{content}"
+    elif role == "assistant":
+        return f"<|assistant|><think></think>{content}"
+    elif role == "cot":
+        return f"<|assistant|><think>{content}</think>"
+    elif role == "tool":
+        return f"<|observation|><tool_response>{content}</tool_response>"
+    else:
+        raise ValueError("Invalid role!")
+
+
 def render_single_message(model_prefix, role, content, tool_name = None) -> str:
     """
     Params:
@@ -179,6 +197,8 @@ def render_single_message(model_prefix, role, content, tool_name = None) -> str:
         res = render_single_qwen3(role, content)
     elif model_prefix in ['jamba-reasoning']:
         res = render_single_jamba_reasoning(role, content)
+    elif model_prefix in ['glm-4.7-flash']:
+        res = render_single_glm47_flash(role, content)
     else:
         raise ValueError("Invalid model!")
 
@@ -210,6 +230,8 @@ def render_mixed_cot(model_prefix, cot, assistant) -> str:
         return f"<|im_start|>assistant\n<think>{cot}</think>{assistant}<|im_end|>\n"
     elif model_prefix in ['jamba-reasoning']:
         return f"<|im_start|>assistant\n<think>\n{cot}\n</think>\n\n{assistant}<|im_end|>\n"
+    elif model_prefix in ['glm-4.7-flash']:
+        return f"<|assistant|><think>{cot}</think>{assistant}"        
     else:
         raise ValueError("Invalid model!")
 
@@ -262,6 +284,8 @@ def load_chat_template(parent_dir, model_prefix) -> str:
         instruct_format = 'qwen3'
     elif model_prefix in ['jamba-reasoning']: 
         instruct_format = 'jamba'
+    elif model_prefix in ['glm-4.7-flash']:
+        instruct_format = 'glm47'
     else:
         raise ValueError(f"Model prefix {model_prefix} not supported")
 

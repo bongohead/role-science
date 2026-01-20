@@ -1950,6 +1950,212 @@ def label_jamba_content_roles(sample_df: pd.DataFrame, thinking_prefix = "") -> 
     out = out.sort_values(["prompt_ix", "token_ix"]).reset_index(drop=True)
     return out
 
+
+def label_glm47flash_content_roles(sample_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Labels GLM-4.7-Flash token streams with *content-only* roles.
+
+    Template characteristics:
+      - Prefix: "[gMASK]<sop>"
+      - Role sentinels: <|system|>, <|user|>, <|assistant|>, <|observation|>
+      - Assistant thinking:
+          * emits "<think>... </think>" when reasoning is included
+          * otherwise emits a standalone "</think>" placeholder
+      - Tool calls in assistant:
+          <tool_call>{name}<arg_key>k</arg_key><arg_value>v</arg_value>...</tool_call>
+        Adjacent XML tags may be fused into a single token (e.g. "</arg_key><arg_value>"),
+        so we treat tokens that are *pure sequences of allowed tags* as structural tags.
+      - Tool outputs in observation:
+          <tool_response>...</tool_response>
+
+    Semantics:
+      - `role` is assigned ONLY to semantic content tokens.
+      - Structural/template/sentinel tokens are role=None and is_content=False.
+      - We do NOT assume any fixed turn ordering.
+
+    Returns original columns +:
+      - role: {system, user, assistant, cot, tool_call, tool} or None
+      - is_content: bool
+      - seg_ix: contiguous run index of content tokens with same role (tags break runs)
+      - token_in_seg_ix: 0-based within seg_ix (NA for non-content)
+    """
+    required = {"prompt_ix", "token_ix", "token"}
+    missing = required - set(sample_df.columns)
+    if missing:
+        raise ValueError(f"sample_df missing required columns: {sorted(missing)}")
+
+    df = (
+        sample_df.sort_values(["prompt_ix", "token_ix"])
+        .reset_index(drop=True)
+        .copy()
+    )
+
+    # -----------------------------
+    # Constants
+    # -----------------------------
+    SYSTEM = "<|system|>"
+    USER = "<|user|>"
+    ASSISTANT = "<|assistant|>"
+    OBS = "<|observation|>"
+
+    ROLE_SENTINELS = {SYSTEM, USER, ASSISTANT, OBS}
+
+    # Prefix is often one token in Flash, but keep older variants too.
+    PREFIX_TOKENS = {"[gMASK]<sop>", "[gMASK]", "<sop>", "<eop>"}
+
+    STRIP_CHARS = "\n\rĊĉĈ \t"
+
+    # Wrapper tags
+    THINK_OPEN, THINK_CLOSE = "<think>", "</think>"
+    TCALL_OPEN, TCALL_CLOSE = "<tool_call>", "</tool_call>"
+    TRESP_OPEN, TRESP_CLOSE = "<tool_response>", "</tool_response>"
+
+    ARGK_OPEN, ARGK_CLOSE = "<arg_key>", "</arg_key>"
+    ARGV_OPEN, ARGV_CLOSE = "<arg_value>", "</arg_value>"
+
+    # Pure-tag-sequence regexes (for handling fused adjacent tags like "</arg_key><arg_value>")
+    ASST_TAG_SEQ_RE = re.compile(
+        r"^(?:"
+        r"<think>|</think>|"
+        r"<tool_call>|</tool_call>|"
+        r"<arg_key>|</arg_key>|"
+        r"<arg_value>|</arg_value>"
+        r")+$"
+    )
+    OBS_TAG_SEQ_RE = re.compile(r"^(?:<tool_response>|</tool_response>)+$")
+
+    # -----------------------------
+    # Normalize token for tag matching (strip whitespace/newline glyphs)
+    # -----------------------------
+    df["token_norm"] = df["token"].astype(str).str.strip(STRIP_CHARS)
+
+    # -----------------------------
+    # Segment by role sentinel
+    # -----------------------------
+    df["is_seg_start"] = df["token_norm"].isin(ROLE_SENTINELS)
+    df["seg_id"] = df.groupby("prompt_ix", sort=False)["is_seg_start"].cumsum()
+
+    df["seg_role_token"] = (
+        df["token_norm"]
+        .where(df["is_seg_start"])
+        .groupby([df["prompt_ix"], df["seg_id"]], sort=False)
+        .transform("first")
+        .fillna("")
+    )
+
+    df["seg_kind"] = np.select(
+        [
+            df["seg_role_token"].eq(SYSTEM),
+            df["seg_role_token"].eq(USER),
+            df["seg_role_token"].eq(ASSISTANT),
+            df["seg_role_token"].eq(OBS),
+        ],
+        ["system", "user", "assistant", "observation"],
+        default=None,
+    )
+
+    in_segment = df["seg_id"] > 0
+    is_assistant_seg = df["seg_kind"].eq("assistant")
+    is_observation_seg = df["seg_kind"].eq("observation")
+
+    # -----------------------------
+    # Tool-call / think membership (assistant only)
+    # Use substring-counts to survive mild token fusion like "<tool_call>name"
+    # -----------------------------
+    tok_raw = df["token"].astype(str)
+
+    df["tcall_open_ct"] = np.where(is_assistant_seg, tok_raw.str.count(re.escape(TCALL_OPEN)), 0)
+    df["tcall_close_ct"] = np.where(is_assistant_seg, tok_raw.str.count(re.escape(TCALL_CLOSE)), 0)
+
+    df["think_open_ct"] = np.where(is_assistant_seg, tok_raw.str.count(re.escape(THINK_OPEN)), 0)
+    df["think_close_ct"] = np.where(is_assistant_seg, tok_raw.str.count(re.escape(THINK_CLOSE)), 0)
+
+    by_seg = df.groupby(["prompt_ix", "seg_id"], sort=False)
+
+    df["tcall_open_cum"] = by_seg["tcall_open_ct"].cumsum()
+    df["tcall_close_cum"] = by_seg["tcall_close_ct"].cumsum()
+    df["in_tool_call"] = df["tcall_open_cum"] > df["tcall_close_cum"]
+
+    df["think_open_cum"] = by_seg["think_open_ct"].cumsum()
+    df["think_close_cum"] = by_seg["think_close_ct"].cumsum()
+    df["in_think"] = df["think_open_cum"] > df["think_close_cum"]
+
+    # -----------------------------
+    # Tag mask
+    # -----------------------------
+    df["is_prefix"] = (df["seg_id"].eq(0)) & df["token_norm"].isin(PREFIX_TOKENS)
+    df["is_role_sentinel"] = df["is_seg_start"]
+
+    # Assistant: structural tags include pure sequences of think/tool_call/arg tags.
+    # (Scoped to assistant so system tool examples remain system CONTENT.)
+    df["is_asst_pure_tag_seq"] = is_assistant_seg & df["token_norm"].str.fullmatch(ASST_TAG_SEQ_RE, na=False)
+
+    # Observation: structural tags include pure sequences of tool_response tags.
+    df["is_obs_pure_tag_seq"] = is_observation_seg & df["token_norm"].str.fullmatch(OBS_TAG_SEQ_RE, na=False)
+
+    # Final tag decision
+    df["is_tag"] = df["is_prefix"] | df["is_role_sentinel"] | df["is_asst_pure_tag_seq"] | df["is_obs_pure_tag_seq"]
+
+    # Content tokens
+    df["is_content"] = in_segment & ~df["is_tag"]
+
+    # -----------------------------
+    # Role assignment (content-only)
+    # -----------------------------
+    role = np.array([None] * len(df), dtype=object)
+
+    # system / user
+    role[(df["seg_kind"].eq("system") & df["is_content"]).to_numpy()] = "system"
+    role[(df["seg_kind"].eq("user") & df["is_content"]).to_numpy()] = "user"
+
+    # assistant precedence: tool_call > cot > assistant
+    asst_content = is_assistant_seg & df["is_content"]
+    role[(asst_content & df["in_tool_call"]).to_numpy()] = "tool_call"
+    role[(asst_content & ~df["in_tool_call"] & df["in_think"]).to_numpy()] = "cot"
+    role[(asst_content & ~df["in_tool_call"] & ~df["in_think"]).to_numpy()] = "assistant"
+
+    # observation: tool output
+    obs_content = is_observation_seg & df["is_content"]
+    role[obs_content.to_numpy()] = "tool"
+
+    df["role"] = role
+
+    # -----------------------------
+    # seg_ix + token_in_seg_ix (content-only; tags break runs)
+    # -----------------------------
+    is_labeled = df["role"].notna()
+
+    prev_labeled = is_labeled.groupby(df["prompt_ix"], sort=False).shift(1, fill_value=False)
+    prev_role = df.groupby("prompt_ix", sort=False)["role"].shift(1)
+
+    is_new_seg = is_labeled & (~prev_labeled | (df["role"] != prev_role))
+    seg_counter = is_new_seg.groupby(df["prompt_ix"], sort=False).cumsum()  # 1,2,3,...
+
+    df["seg_ix"] = pd.Series(pd.NA, index=df.index, dtype="Int64")
+    df.loc[is_labeled, "seg_ix"] = (seg_counter[is_labeled] - 1).astype("Int64")
+
+    df["token_in_seg_ix"] = pd.Series(pd.NA, index=df.index, dtype="Int64")
+    df.loc[is_labeled, "token_in_seg_ix"] = (
+        df.loc[is_labeled].groupby(["prompt_ix", "seg_ix"], sort=False).cumcount().astype("Int64")
+    )
+
+    # -----------------------------
+    # Cleanup
+    # -----------------------------
+    drop_cols = [
+        "token_norm",
+        "is_seg_start", "seg_id", "seg_role_token", "seg_kind",
+        "is_prefix", "is_role_sentinel",
+        "tcall_open_ct", "tcall_close_ct", "tcall_open_cum", "tcall_close_cum", "in_tool_call",
+        "think_open_ct", "think_close_ct", "think_open_cum", "think_close_cum", "in_think",
+        "is_asst_pure_tag_seq", "is_obs_pure_tag_seq",
+        "is_tag",
+    ]
+    out = df.drop(columns=drop_cols, errors="ignore")
+    out = out.sort_values(["prompt_ix", "token_ix"]).reset_index(drop=True)
+    return out
+
+
 def label_content_roles(model_prefix, sample_df):
     """
     Takes a token-level df, labels each token with its role only within the content span. Makes no assumption about the number of messages in the sequence.
@@ -1987,7 +2193,8 @@ def label_content_roles(model_prefix, sample_df):
         'glm-4.6v-flash': label_glm4_content_roles,
         'apriel-1.6-15b-thinker': label_apriel_content_roles,
         'olmo3-7b-think': label_olmo3_content_roles,
-        'jamba-reasoning': label_jamba_content_roles
+        'jamba-reasoning': label_jamba_content_roles,
+        'glm-4.7-flash': label_glm47flash_content_roles
     }
 
     try:

@@ -10,7 +10,7 @@ from transformers.masking_utils import create_causal_mask
 def run_glm46v_return_topk(model, input_ids, attention_mask, pixel_values = None, pixel_values_videos = None, image_grid_thw = None, video_grid_thw = None, return_hidden_states: bool = False):
     """
     Params:
-        @model: A model of class `GptOssForCausalLM`.
+        @model: A model of class `Glm4vModel`.
         @input_ids: A (B, N) tensor of input IDs on the same device as `model`.
         @attention_mask: A (B, N) tensor of mask indicators on the same device as `model`.
         @pixel_values: (L_img, C, P, P, ...) tensor of image pixels, as produced by the GLM-4v processor; may be None (text only).
