@@ -7,7 +7,7 @@ gptoss-20b:
   train_prefixes:
     - ""
   train_params:
-    C: 1.0e-3
+    C: 1.0e-2
     add_scaling: false
   test_prefix: |-
     <|startoftext|><|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.
@@ -42,7 +42,7 @@ gptoss-120b:
     <|startoftext|><|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.
     Knowledge cutoff: 2024-06
     Current date: 2025-12-31
-`
+
     Reasoning: medium
 
     # Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>
@@ -160,9 +160,9 @@ glm-4.7-flash:
     - ""
   train_params:
     C: 1.0e+1
-    add_scaling: false
+    add_scaling: true
   test_prefix: |-
-    [gMASK]<sop><
+    [gMASK]<sop>
   test_seperators:
     untagged_role_sep: " "
     untagged_start_sep: " "
