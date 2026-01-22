@@ -87,7 +87,7 @@ def run_and_export_states(model, tokenizer, *, run_model_return_states, dl: Reco
         'all_hs': all_hidden_states
     }
 
-def run_projections(valid_sample_df, layer_hs, probe):
+def run_projections(valid_sample_df: pd.DataFrame, layer_hs: torch.Tensor, probe: dict) -> pd:
     """
     Run probe-level projections
     
