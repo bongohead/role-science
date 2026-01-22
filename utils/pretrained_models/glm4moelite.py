@@ -1,10 +1,9 @@
 """
 Reversed engineered forward pass for GLM-4.7-Flash
 - Supports GLM-4.7-Flash
-- See: modeling_glm47moelite.py
+- See: modeling_glm4moelite.py
 """
 import torch
-import torch.nn.functional as F
 from transformers.masking_utils import create_causal_mask
 from ._pretrained_helpers import _sort_gate_tensors
 
@@ -97,8 +96,14 @@ def run_glm4moelite_return_topk(model, input_ids, attention_mask, return_hidden_
             router_logits = layer.mlp.gate(hidden_state)  # (B*N, n_routed_experts), fp32 from HF implementation
             topk_indices, topk_weights = layer.mlp.route_tokens_to_experts(router_logits)  # (B*N, topk), (B*N, topk)
 
-            all_topk_experts.append(topk_indices.detach().cpu())
-            all_topk_weights.append(topk_weights.detach().cpu().to(torch.float32))
+            topk_ids, topk_weight, layer_expert_outputs = _sort_gate_tensors(
+                topk_indices.detach(),
+                topk_weights.detach(),
+                None
+            )
+
+            all_topk_experts.append(topk_ids.detach().cpu())
+            all_topk_weights.append(topk_weight.detach().cpu().to(torch.float32))
 
             if return_hidden_states:
                 all_router_logits.append(router_logits.detach().cpu())
@@ -130,7 +135,6 @@ def run_glm4moelite_return_topk(model, input_ids, attention_mask, return_hidden_
 
     return {
         "logits": logits,
-        "all_moe_layer_ixs": all_moe_layer_ixs,
         "all_topk_experts": all_topk_experts,
         "all_topk_weights": all_topk_weights,
         "all_pre_mlp_hidden_states": all_pre_mlp_hidden_states,
