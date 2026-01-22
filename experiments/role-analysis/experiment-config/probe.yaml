@@ -42,7 +42,7 @@ gptoss-120b:
     <|startoftext|><|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.
     Knowledge cutoff: 2024-06
     Current date: 2025-12-31
-
+`
     Reasoning: medium
 
     # Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>
@@ -68,17 +68,69 @@ nemotron-3-nano:
     untagged_start_sep: "\n\n"
     tagged_start_sep: "\n"
 
-glm-4.5-air:
+qwen3-30b-a3b: 
   n_sample_size: 250
   seq_len: 1024
   nested_reasoning: true
   train_prefixes:
     - ""
   train_params:
-    C: 1.0e-3
+    C: 1.0e-1
     add_scaling: false
   test_prefix: |-
-    [gMASK]<sop>
+    <|im_start|>system
+    <|im_end|>
+  test_seperators:
+    untagged_role_sep: "\n\n"
+    untagged_start_sep: "\n\n"
+    tagged_start_sep: "\n"
+
+jamba-reasoning: 
+  n_sample_size: 250
+  seq_len: 1024
+  nested_reasoning: true
+  train_prefixes:
+    - ""
+  train_params:
+    C: 1.0
+    add_scaling: false
+  test_prefix: |-
+    <|startoftext|>
+  test_seperators:
+    untagged_role_sep: "\n\n"
+    untagged_start_sep: "\n"
+    tagged_start_sep: ""
+
+# ALL SETTINGS BELOW ARE UNTESTED - MODIFY AS NEEDED
+olmo3-7b-think: 
+  n_sample_size: 250
+  seq_len: 1024
+  nested_reasoning: true
+  train_prefixes:
+    - ""
+  train_params:
+    C: 1.0e-1
+    add_scaling: false
+  test_prefix: |-
+    <|endoftext|><|im_start|>system
+    You are a helpful AI assistant.<|im_end|>
+  test_seperators:
+    untagged_role_sep: "\n\n"
+    untagged_start_sep: "\n\n"
+    tagged_start_sep: "\n"
+
+apriel-1.6-15b-thinker: 
+  n_sample_size: 250
+  seq_len: 1024
+  nested_reasoning: true
+  train_prefixes:
+    - ""
+  train_params:
+    C: 1.0e-2
+    add_scaling: false
+  test_prefix: |-
+    <s><|begin_system|>
+    You are a thoughtful, systematic AI assistant from ServiceNow Language Models (SLAM) lab. Analyze each question carefully, present your reasoning step-by-step, then provide the final response after the marker [BEGIN FINAL RESPONSE].
   test_seperators:
     untagged_role_sep: "\n\n"
     untagged_start_sep: "\n\n"
@@ -115,71 +167,3 @@ glm-4.7-flash:
     untagged_role_sep: " "
     untagged_start_sep: " "
     tagged_start_sep: " "
-
-
-qwen3-30b-a3b: 
-  n_sample_size: 250
-  seq_len: 1024
-  nested_reasoning: true
-  train_prefixes:
-    - ""
-  train_params:
-    C: 1.0e-1
-    add_scaling: false
-  test_prefix: |-
-    <|im_start|>system
-    <|im_end|>
-  test_seperators:
-    untagged_role_sep: "\n\n"
-    untagged_start_sep: "\n\n"
-    tagged_start_sep: "\n"
-
-jamba-reasoning: 
-  n_sample_size: 250
-  seq_len: 1024
-  nested_reasoning: true
-  train_prefixes:
-    - ""
-  train_params:
-    C: 1.0
-    add_scaling: false
-  test_prefix: |-
-    <|startoftext|>
-  test_seperators:
-    untagged_role_sep: "\n\n"
-    untagged_start_sep: "\n"
-    tagged_start_sep: ""
-
-olmo3-7b-think: 
-  n_sample_size: 250
-  seq_len: 1024
-  nested_reasoning: true
-  train_prefixes:
-    - ""
-  train_params:
-    C: 1.0e-1
-    add_scaling: false
-  test_prefix: |-
-    <|endoftext|><|im_start|>system
-    You are a helpful AI assistant.<|im_end|>
-  test_seperators:
-    untagged_role_sep: "\n\n"
-    untagged_start_sep: "\n\n"
-    tagged_start_sep: "\n"
-
-apriel-1.6-15b-thinker: 
-  n_sample_size: 250
-  seq_len: 1024
-  nested_reasoning: true
-  train_prefixes:
-    - ""
-  train_params:
-    C: 1.0e-2
-    add_scaling: false
-  test_prefix: |-
-    <s><|begin_system|>
-    You are a thoughtful, systematic AI assistant from ServiceNow Language Models (SLAM) lab. Analyze each question carefully, present your reasoning step-by-step, then provide the final response after the marker [BEGIN FINAL RESPONSE].
-  test_seperators:
-    untagged_role_sep: "\n\n"
-    untagged_start_sep: "\n\n"
-    tagged_start_sep: "\n"
