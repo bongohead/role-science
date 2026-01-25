@@ -1,34 +1,28 @@
 
 <h2 align="center">How Prompt Injections Work</h2>
-<div align="center" style="line-height: 1;">
-    <a href="">📑 ArXiv</a>
-</div>
 
+This repo contains replication code for the How Prompt Injections Work paper. 
 
 ## Table of Contents
 
-1. [Introduction](#1-introduction)
-2. [Initial setup](#2-initial-setup)
-3. [Run role-space analysis](#3-run-role-space-analysis)
-3. [Run CoT Forgery attacks in user prompts](#3-run-cot-forgery-attacks-in-user-prompts)
-4. [Run CoT Forgery attacks in agents](#4-run-cot-forgery-attacks-in-agents)
-6. [Run prompt injection role analysis](#5-run-prompt-injection-role-analysis)
+1. [Initial setup](#1-initial-setup)
+2. [Role Space Analysis](#2-role-space-analysis)
+3. [CoT Forgery: Chat Jailbreaks](#3-cot-forgery-chat-jailbreaks)
+4. [CoT Forgery: Agents](#4-cot-forgery-agents)
+5. [Role Analysis: CoT Forgery](#5-role-analysis-cot-forgery)
+6. [Role Analysis: General Prompt Injections](#6-run-prompt-injection-role-analysis)
 
-## 1. Introduction
-This repo contains replication code for the <a>How Prompt Injections Work</a> paper. 
+## 1. Initial setup
+1. **Clone repo**: Code assumes CUDA GPU; all models and analyses were originally run on an H200.
+2. **Install Python dependencies**: Run `bash setup_python.sh` to set up the Python dependencies. Python 3.12+, CUDA 12.8 required.
+3. **Install R dependencies**: Run `bash setup_r.sh` to set up R (optional, needed for analysis and plots).
+4. **Add env variables**: Create a `.env` file in this repo with `OPENROUTER_API_KEY`.
 
-## 2. Initial setup
-1. **Clone repo on GPU server**: Code assumes CUDA GPU; all models and analyses fit on an H200 SXM.
-2. **Set up dependencies**: Run `bash setup_python.sh` to set up the Python dependencies. 
-  - Dependencies frozen using latest versions of most packages as of Jan 2026; key dependencies are `CUDA 12.8`, `torch==3.9.1`, and `transformers==v4.57.5`.
-3. **(Optional) Set up visualization dependencies**: Run `bash setup_r.sh` to set up R; required for most analytics / visualization code.
-4. **Add env variables**: Create a `.env` file in this repo with `OPENROUTER_API_KEY` (utilized for evaluating closed-weight models).
-
-## 3. Run role-space analysis
-This section analyzes models' internal role perception. Notebooks and outputs are model-specific; set model choice in code. Supported models: `gpt-oss-20b/120b`, `Nemotron-3-Nano`, `Qwen3-30B-A3B`, `Jamba-Reasoning-3B`, `Apriel-1.6-15b-Thinker`, `GLM-4.6V-Flash`.
+## 2. Role Space Analysis
+This section analyzes models' internal role perception. Notebooks and outputs are model-specific; set model choice in code. Supported models: `gpt-oss-20b/120b`, `Nemotron-3-Nano`, `Qwen3-30B-A3B`, `Jamba-Reasoning-3B`.
 
 <p align="center">
-  <img src="docs/cotness-phase-portrait-alt-tags.png">
+  <img src="docs/cotness-phase-portrait-alt-tags.png" width="80%">
 </p>
     
 Run notebooks to: (1) generate model-specific conversational data; (2) train and validate **role probes**; (3) conduct role-space visualizations and analyses.
@@ -75,10 +69,10 @@ Run notebooks to: (1) generate model-specific conversational data; (2) train and
       **↗️ Output**: `role-analysis/plots/*` (plots)
       </details>
 
-## 3. Run CoT Forgery attacks in user prompts
+## 3. CoT Forgery: Chat Jailbreaks
 This section runs and evaluates the CoT Forgery prompts on a variety of local and closed-weight models.
 <p align="center">
-  <img src="docs/user-eval-result.png">
+  <img src="docs/user-eval-result.png" width="70%">
 </p>
 Run notebooks to: (1) generate the actual CoT Forgery jailbreak prompts; (2) run the attacks on locally-loaded `gpt-oss-*` model; (3) run the attacks on closed-weight models; and (4) create visualizations of the results. 
 
@@ -124,10 +118,10 @@ Run notebooks to: (1) generate the actual CoT Forgery jailbreak prompts; (2) run
       **↗️ Output**: `user-injections/plots/*` (visualizations)
       </details>
 
-## 4. Run CoT Forgery attacks in agents
+## 4. CoT Forgery: Agents
 The below notebooks run an agentic prompt injection jailbreak using an ReAct tool use loop.
 <p align="center">
-  <img src="docs/agent-eval-result.png">
+  <img src="docs/agent-eval-result.png" width="70%">
 </p>
 Run the notebooks in this section to: (1) run CoT Forgery prompt injection on local models; (2) run CoT Forgery prompt injection on closed weight models; (3) visualize results.
 
@@ -161,10 +155,10 @@ Run the notebooks in this section to: (1) run CoT Forgery prompt injection on lo
       </details>
 
 
-## 6. Run prompt injection role analysis
+## 5. Role Analysis: CoT Forgery
 This section notebooks perform the causal mechanistic analysis using the probes trained in the previous section, but now to analyze the prompt injections from sections 3-4.
 <p align="center">
-  <img src="docs/cotness-redteam.png">
+  <img src="docs/cotness-redteam.png" width="90%">
 </p>
 Run notebooks to: (1-2) generate activations from the CoT Forgery prompts + generations in the previous section; (3) use the role probes; (4) visualize results.
 
@@ -210,4 +204,33 @@ Run notebooks to: (1-2) generate activations from the CoT Forgery prompts + gene
       **📥 Requires**: `02-project-role-probes.ipynb`
       
       **↗️ Output**: `role-injection-analysis/plots/*` (visualizations)
+      </details>
+
+## 6. Role Analysis: General Prompt Injections
+This section notebooks perform the role analysis on the agent tool injections.
+<p align="center">
+  <img src="docs/xxx.png" width="80%">
+</p>
+Run notebooks to: (1) create prompt injection attacks + evaluate them + extract the userness of each; (2) visualize results.
+
+1. **Create prompt injections, run agent loops, and project userness for each variant**
+    - **🚀 Run**: `agent-injections/01-export-user-injection-activations.ipynb` 
+    - <details><summary>Description</summary>
+      
+      **📚 Description**: Creates prompt injection attacks, runs ReAct loop for `gpt-oss-*` model, classifies agent harm level, extract userness of each injected query.
+      
+      **📥 Requires**: `role-analysis/02-train-role-probes.ipynb`
+      
+      **↗️ Output**: `outputs/agent-outputs-classified-{model_name}.csv` (all prompt injection agent transcripts, mean userness per prompt, classification results)
+      </details>
+
+2. **Visualize results**
+    - **🚀 Run**: `agent-injections/02-analyze-injections.ipynb` 
+    - <details><summary>Description</summary>
+      
+      **📚 Description**: Visualize results from previous part.
+      
+      **📥 Requires**: `01-export-user-injection-activations.ipynb`
+      
+      **↗️ Output**: `outputs/plots/*` (visualizations)
       </details>
