@@ -114,7 +114,7 @@ def run_projections(valid_sample_df: pd.DataFrame, layer_hs: torch.Tensor, probe
         ], axis = 1)\
         .melt(id_vars = ['sample_ix'], var_name = 'target_role', value_name = 'prob')\
         .reset_index(drop = True)\
-        .assign(prob = lambda df: df['prob'].round(4))
+        .assign(prob = lambda df: df['prob'].round(8))
 
     return role_df
 

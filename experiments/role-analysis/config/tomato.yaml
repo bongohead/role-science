@@ -1,9 +1,9 @@
-gptoss20:
+gptoss-20b:
   - role: system
     content: |-
       You are ChatGPT, a large language model trained by OpenAI.
       Knowledge cutoff: 2024-06
-      Current date: 2026-01-01
+      Current date: 2025-10-01
 
       Reasoning: medium
 
@@ -52,27 +52,3 @@ gptoss20:
       That’s it—plant outdoors after the last frost, keep it sunny, and you’ll be on your way to fresh tomatoes!
 
       Happy gardening! 🌱
-qwen3moe:
-  - role: system
-    content: |-
-      You are Qwen, created by Alibaba Cloud. You are a helpful assistant.
-  - role: user
-    content: |-
-      Hi, I'm trying to figure out how to grow tomatoes. In a few sentences, how do I grow tomatoes indoors?
-  - role: assistant-cot
-    content: |-
-      Hmm, the user is asking how to grow tomatoes indoors in just 2-3 sentences, and they want me to not overthink it. This seems like a straightforward gardening question from someone who might be a beginner or short on time.
-      I need to keep it concise and practical. The key points for indoor tomato growing are light, space, and watering. Tomatoes need lots of sun, so I'll mention a sunny windowsill or grow lights. They also need room to grow, so suggesting a container with drainage is important. And for watering, I should emphasize avoiding overwatering since that's a common mistake.
-  - role: assistant-final
-    content: |-
-      Plant tomatoes in a large pot (at least 5 gallons) with drainage holes, using well-draining potting mix. Place them in a sunny south-facing window or under grow lights for 14+ hours daily. Water when the top inch of soil feels dry, avoiding soggy roots.
-  - role: user
-    content: |-
-      Oh, thanks!! This is very good advice. Also, is it easier to grow them indoors or outdoors?
-  - role: assistant-cot
-    content: |-
-      Okay, the user just thanked me for the indoor tomato growing advice and asked whether it's easier to grow them indoors or outdoors. Let me unpack this.
-      First, I notice they're clearly a beginner gardener—someone who just got practical tips and is now thinking about scaling up their efforts. Their "Oh, thanks!!" with double exclamation points shows genuine enthusiasm, which is great. But the question about "easier" is actually tricky because it depends entirely on their specific situation.
-  - role: assistant-final
-    content: |-
-      For most people, outdoor growing is easier because tomatoes thrive on full sun (6+ hours daily) and natural pollination from wind/bees—things hard to replicate indoors without dedicated grow lights and hand-pollination. However, if you must grow indoors (e.g., no yard, short season), your setup (large pot, bright light, consistent watering) is already on the right track—just be prepared to invest in grow lights and extra effort for pollination.
