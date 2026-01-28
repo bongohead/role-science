@@ -11,7 +11,7 @@ from tqdm import tqdm
 import cupy
 
 @torch.no_grad()
-def run_and_export_states(model, tokenizer, *, run_model_return_states, dl: ReconstructableTextDataset, layers_to_keep_acts: list[int]):
+def run_and_export_states(model, tokenizer, *, run_model_return_states, dl: ReconstructableTextDataset, layers_to_keep_acts: list[int], extraction_key: str = 'all_pre_mlp_hidden_states'):
     """
     Run forward passes on given model and store the decomposed sample_df plus hidden states
 
@@ -21,6 +21,7 @@ def run_and_export_states(model, tokenizer, *, run_model_return_states, dl: Reco
         @run_model_return_states: A function that runs the model and returns a dict with keys `logits` and `all_pre_mlp_hidden_states`.
         @dl: A ReconstructableTextDataset of which returns `input_ids`, `attention_mask`, `original_tokens`, and `prompt_ix`.
         @layers_to_keep_acts: A list of layer indices (0-indexed) for which to filter `all_pre_mlp_hidden_states` (see returned object description).
+        @extract: The key in the output of `run_model_return_states` to extract hidden states from.
 
     Returns:
         A dict with keys:
@@ -77,7 +78,7 @@ def run_and_export_states(model, tokenizer, *, run_model_return_states, dl: Reco
 
         # Store pre-MLP hidden states - the fwd pass as n_layers list as BN x D, collapse to BN x n_layers x D, with BN filtering out masked items
         valid_pos = torch.where(attention_mask.cpu().view(-1) == 1) # Valid (BN, ) positions
-        all_hidden_states.append(torch.stack(output['all_pre_mlp_hidden_states'], dim = 1)[valid_pos][:, layers_to_keep_acts, :])
+        all_hidden_states.append(torch.stack(output[extraction_key], dim = 1)[valid_pos][:, layers_to_keep_acts, :])
 
     sample_df = pd.concat(sample_dfs, ignore_index = True).drop(columns = ['batch_ix', 'sequence_ix']) # Drop batch/seq_ix, since prompt_ix identifies
     all_hidden_states = torch.cat(all_hidden_states, dim = 0)
