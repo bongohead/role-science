@@ -1,13 +1,13 @@
 # This file contains training probe training + eval setting for each model.
 
 gptoss-20b:
-  n_sample_size: 400
+  n_sample_size: 250
   seq_len: 1024
   nested_reasoning: false
   train_prefixes:
     - ""
   train_params:
-    C: 1.0e-2
+    C: 5.0e-3
     add_scaling: false
   test_prefix: |-
     <|startoftext|><|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.
