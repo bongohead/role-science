@@ -1,7 +1,7 @@
 
-<h2 align="center">How Prompt Injections Work</h2>
+<h2 align="center">Prompt Injection as Role Confusion</h2>
 
-This repo contains replication code for the How Prompt Injections Work paper. 
+This repo contains replication code for "Prompt Injection as Role Confusion". 
 
 ## Table of Contents
 
@@ -158,7 +158,7 @@ Run the notebooks in this section to: (1) run CoT Forgery prompt injection on lo
 ## 5. Role Analysis: CoT Forgery
 This section notebooks perform the causal mechanistic analysis using the probes trained in the previous section, but now to analyze the prompt injections from sections 3-4.
 <p align="center">
-  <img src="docs/cotness-redteam.png" width="90%">
+  <img src="docs/userness-x-asr.png" width="90%">
 </p>
 Run notebooks to: (1-2) generate activations from the CoT Forgery prompts + generations in the previous section; (3) use the role probes; (4) visualize results.
 
@@ -209,7 +209,7 @@ Run notebooks to: (1-2) generate activations from the CoT Forgery prompts + gene
 ## 6. Role Analysis: General Prompt Injections
 This section notebooks perform the role analysis on the agent tool injections.
 <p align="center">
-  <img src="docs/xxx.png" width="80%">
+  <img src="docs/userness_x_asr.png" width="60%">
 </p>
 Run notebooks to: (1) create prompt injection attacks + evaluate them + extract the userness of each; (2) visualize results.
 
