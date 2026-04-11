@@ -1,9 +1,51 @@
 
-<h2 align="center">Prompt Injection as Role Confusion</h2>
+<h1 align="center">Prompt Injection as Role Confusion</h1>
+<p align="center">
+  <a href="https://arxiv.org/abs/2603.12277"><img alt="arXiv" src="https://img.shields.io/badge/arXiv-2603.12277-b31b1b"></a>
+  <img alt="status" src="https://img.shields.io/badge/status-research%20code-6e7781">
+</p>
 
-This repo contains replication code for "Prompt Injection as Role Confusion". 
 
-## Table of Contents
+<p align="center">
+  Code for the paper <a href="https://arxiv.org/abs/2603.12277">Prompt Injection as Role Confusion</a>.
+  This repository reproduces the main experiments on role probes, chat prompt injection, agent prompt injection, and role-space analysis.
+</p>
+
+## 🔍 Overview
+Large language models remain vulnerable to prompt injection because they can confuse *how* text is written with *where* it came from. This repository contains the code used in the paper to study that failure mode through **role probes** and to evaluate prompt injection attacks in both chat and agent settings.
+
+In practical terms, this repo lets you:
+
+- train and apply **role probes** that measure how a model internally identifies “who is speaking”
+- run **reasoning spoofing (CoT forgery)** evaluations
+- run **agent prompt injections** evaluations in a ReAct-style tool loop
+- project attacks into **role space** and understand how role confusion drives attack success
+
+## ⚡ Quickstart
+
+### 🧠 Role Probes
+Use this if you want the quickest end-to-end example of training role probes and using them to understand attack success.
+
+Download these files:
+- `demo/role-probe-demo.ipynb`
+- `demo/simple_test_helpers.py`
+
+Run:
+- open `demo/role-probe-demo.ipynb`
+- make sure `demo/simple_test_helpers.py` is available in the same working context
+
+### 🧪 CoT Forgery
+Use this if you want a compact demo of the reasoning spoofing attack.
+
+Download this file:
+- `demo/cot-forgery-demo.ipynb`
+
+Run:
+- open and execute `demo/cot-forgery-demo.ipynb`
+
+## 🔁 Full reproduction
+
+The sections below mirror the main experiment families in the paper.
 
 1. [Initial setup](#1-initial-setup)
 2. [Role Space Analysis](#2-role-space-analysis)
@@ -12,13 +54,13 @@ This repo contains replication code for "Prompt Injection as Role Confusion".
 5. [Role Analysis: CoT Forgery](#5-role-analysis-cot-forgery)
 6. [Role Analysis: General Prompt Injections](#6-run-prompt-injection-role-analysis)
 
-## 1. Initial setup
+### 1. Initial setup
 1. **Clone repo**: Code assumes CUDA GPU; all models and analyses were originally run on an H200.
 2. **Install Python dependencies**: Run `bash setup_python.sh` to set up the Python dependencies. Python 3.12+, CUDA 12.8 required.
 3. **Install R dependencies**: Run `bash setup_r.sh` to set up R (optional, needed for analysis and plots).
 4. **Add env variables**: Create a `.env` file in this repo with `OPENROUTER_API_KEY`.
 
-## 2. Role Space Analysis
+### 2. Role Space Analysis
 This section analyzes models' internal role perception. Notebooks and outputs are model-specific; set model choice in code. Supported models: `gpt-oss-20b/120b`, `Nemotron-3-Nano`, `Qwen3-30B-A3B`, `Jamba-Reasoning-3B`.
 
 <p align="center">
@@ -69,7 +111,7 @@ Run notebooks to: (1) generate model-specific conversational data; (2) train and
       **↗️ Output**: `role-analysis/plots/*` (plots)
       </details>
 
-## 3. CoT Forgery: Chat Jailbreaks
+### 3. CoT Forgery: Chat Jailbreaks
 This section runs and evaluates the CoT Forgery prompts on a variety of local and closed-weight models.
 <p align="center">
   <img src="docs/user-eval-result.png" width="70%">
@@ -118,7 +160,7 @@ Run notebooks to: (1) generate the actual CoT Forgery jailbreak prompts; (2) run
       **↗️ Output**: `user-injections/plots/*` (visualizations)
       </details>
 
-## 4. CoT Forgery: Agents
+### 4. CoT Forgery: Agents
 The below notebooks run an agentic prompt injection jailbreak using an ReAct tool use loop.
 <p align="center">
   <img src="docs/agent-eval-result.png" width="70%">
@@ -155,7 +197,7 @@ Run the notebooks in this section to: (1) run CoT Forgery prompt injection on lo
       </details>
 
 
-## 5. Role Analysis: CoT Forgery
+### 5. Role Analysis: CoT Forgery
 This section notebooks perform the causal mechanistic analysis using the probes trained in the previous section, but now to analyze the prompt injections from sections 3-4.
 <p align="center">
   <img src="docs/cotness-redteam.png" width="90%">
@@ -206,7 +248,7 @@ Run notebooks to: (1-2) generate activations from the CoT Forgery prompts + gene
       **↗️ Output**: `role-injection-analysis/plots/*` (visualizations)
       </details>
 
-## 6. Role Analysis: General Prompt Injections
+### 6. Role Analysis: General Prompt Injections
 This section notebooks perform the role analysis on the agent tool injections.
 <p align="center">
   <img src="docs/userness-x-asr.png" width="60%">
