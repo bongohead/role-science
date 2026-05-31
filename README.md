@@ -42,19 +42,7 @@ Everything else below is only needed for full experiment-by-experiment replicati
 
 ### Hardware
 
-The full experiments assume a CUDA GPU. The paper experiments were originally
-run on an H200. Smaller local experiments may work on other CUDA GPUs, but the larger models and activation-export workflows are memory-intensive and may
-require H200-class hardware.
-
-Activation exports and model outputs can also require substantial disk space.
-For a quick first pass, use the `demo/` notebooks instead.
-
-
-## Requirements
-
-### Hardware
-
-The full experiments assume a CUDA GPU. The paper experiments were originally run on an H200. Smaller local experiments may work on other CUDA GPUs, but the full `gpt-oss-120b` and activation-export workflows are memory-intensive and may require H200-class hardware.
+The full experiments assume a CUDA GPU. The paper experiments were originally run on an H200. Smaller local experiments may work on other CUDA GPUs, but larger models activation-export workflows are memory-intensive and may require similarly high VRAM.
 
 Activation exports and model outputs can also require substantial disk space. For a quick first pass, start with the `demo/` notebooks before running the full reproduction workflows.
 
@@ -67,7 +55,7 @@ Activation exports and model outputs can also require substantial disk space. Fo
 Install dependencies:
 
 ```bash
-bash setup_python.sh
+bash setup_python.sh # Change paths in file to local venv
 bash setup_r.sh
 ```
 
@@ -114,7 +102,7 @@ Supported models include:
 | --- | --- | --- | --- |
 | Generate conversational data | `role-analysis/01-get-conversations-data.ipynb` | OpenRouter or local model access | `convs/{model_name}.csv` |
 | Train and evaluate role probes | `role-analysis/02-train-role-probes.ipynb` | Conversation data | `outputs/probes/{model_name}.pkl`, `outputs/probe-training/*.csv`, `outputs/probe-projections/*.csv` |
-| Plot conversation projections | `role-analysis/analyze-probes.ipynb` | Trained probes and projections | `role-analysis/plots/*` |
+| Plot conversation projections | `role-analysis/03-analyze-probes.ipynb` | Trained probes and projections | `role-analysis/plots/*` |
 | Plot gardening-conversation projections | `role-analysis/04-tomato-probe-results.ipynb` | Trained probes and projections | `role-analysis/plots/*` |
 
 The first notebook builds model-specific conversation data from `toxicchat` and
@@ -164,7 +152,7 @@ tool-use loop.
 | --- | --- | --- | --- |
 | Run local-agent evaluations | `cot-forgery-agent-evals/01-run-injections-gpt-oss.ipynb` | Local `gpt-oss-*` model access | `local-agent-outputs-{model_name}-classified.csv` |
 | Run hosted-agent evaluations | `cot-forgery-agent-evals/02-run-injections-openai.ipynb` | Hosted model API access | `api-agents-output-classified.csv` |
-| Plot results | `cot-forgery-agent-evals/03-plot-agent-results.ipynb` | Classified agent outputs | `cot-forgery-agent-evals/plots/*` |
+| Plot results | `cot-forgery-agent-evals/03-plot-injections.ipynb` | Classified agent outputs | `cot-forgery-agent-evals/plots/*` |
 
 The outputs include full agent-loop transcripts and final success
 classifications.
@@ -181,7 +169,7 @@ CoT Forgery activations from the chat and agent experiments, showing how styling
 | Step | Notebook | Requires | Main outputs |
 | --- | --- | --- | --- |
 | Export chat-attack activations | `cot-forgery-role-confusion/02-export-user-injection-activations.ipynb` | `cot-forgery-chat-evals/02-export-jailbreak-generations.ipynb` | `activations-redteam/{model_name}` |
-| Export agent-attack activations | `cot-forgery-role-confusion/03-export-agent-activations.ipynb` | `cot-forgery-agent-evals/01-run-injections-gpt-oss.ipynb` | `activations-agent/{model_name}` |
+| Export agent-attack activations | `cot-forgery-role-confusion/01-export-agent-activations.ipynb` | `cot-forgery-agent-evals/01-run-injections-gpt-oss.ipynb` | `activations-agent/{model_name}` |
 | Project attacks into role space | `cot-forgery-role-confusion/03-project-role-probes.ipynb` | Trained probes and exported activations | `cot-forgery-role-confusion/exports/*` |
 | Plot chat and agent role analyses | `cot-forgery-role-confusion/04-plot-injection-probe-results.ipynb`, `cot-forgery-role-confusion/05-plot-agent-probe-results.ipynb` | Role-projection exports | `cot-forgery-role-confusion/plots/*` |
 
@@ -202,7 +190,7 @@ prompt-injection role-confusion analysis in the paper, where we vary Userness ex
 
 | Step | Notebook | Requires | Main outputs |
 | --- | --- | --- | --- |
-| Run prompt-injection variants and project Userness | `agent-injections/01-export-user-injection-activations.ipynb` | Trained role probes | `outputs/agent-outputs-classified-{model_name}.csv` |
+| Run prompt-injection variants and project Userness | `agent-injections/01-run-user-injections-gpt-oss.ipynb` | Trained role probes | `outputs/agent-outputs-classified-{model_name}.csv` |
 | Plot results | `agent-injections/02-analyze-injections.ipynb` | Classified outputs with Userness | `outputs/plots/*` |
 
 The first notebook creates prompt-injection variants, runs the ReAct loop for
