@@ -1,25 +1,43 @@
 
 <h1 align="center">Prompt Injection as Role Confusion</h1>
 <p align="center">
+  <a href="https://role-confusion.github.io/"><img alt="Blog post" src="https://img.shields.io/badge/project-page-1d91c0"></a>
   <a href="https://arxiv.org/abs/2603.12277"><img alt="arXiv" src="https://img.shields.io/badge/arXiv-2603.12277-b31b1b"></a>
+  <a href="https://arxiv.org/pdf/2603.12277"><img alt="Paper PDF" src="https://img.shields.io/badge/paper-PDF-e89522"></a>
   <img alt="status" src="https://img.shields.io/badge/status-research%20code-6e7781">
 </p>
 
-
 <p align="center">
-  Code for the paper <a href="https://arxiv.org/abs/2603.12277">Prompt Injection as Role Confusion</a>.
-  This repository reproduces the main experiments on role probes, chat prompt injection, agent prompt injection, and role-space analysis.
+  Research code for
+  <a href="https://arxiv.org/abs/2603.12277"><em>Prompt Injection as Role Confusion</em></a>.
+  This repository reproduces the paper's role-probe, chat prompt-injection,
+  agent prompt-injection, and role-space analysis experiments.
 </p>
 
-## 🔍 Overview
-Large language models remain vulnerable to prompt injection because they can confuse *how* text is written with *where* it came from. This repository contains the code used in the paper to study that failure mode through **role probes** and to evaluate prompt injection attacks in both chat and agent settings.
+## Overview
+
+LLMs see the world as a single stream of text, partitioned into *roles* like `<user>` or `<tool>`. We trace **prompt injection** to **role confusion**: models perceive the source of text from *how it sounds*, not its labeled role. A command hidden in a webpage hijacks an agent simply because it sounds like `<user>` text, despite its `<tool>` label. We design *role probes* to measure how LLMs internally perceive "who is speaking", and find that injected text occupies the same representational space as the trusted role it imitates. We demonstrate this with a new attack (CoT Forgery), a zero-shot attack that injects fabricated reasoning into user prompts and tool outputs. Models mistake the forgery for their own thoughts. We also generalize to standard agent prompt injections (fake instructions hidden in `<tool>` data) and show they succeed via role confusion as well. Blog post [here](https://role-confusion.github.io/).
 
 In practical terms, this repo lets you:
 
-- train and apply **role probes** that measure how a model internally identifies “who is speaking”
-- run **reasoning spoofing (CoT forgery)** evaluations
-- run **agent prompt injections** evaluations in a ReAct-style tool loop
-- project attacks into **role space** and understand how role confusion drives attack success
+- train and apply role probes role probes that measure how a model internally identifies “who is speaking”
+- project attacks into role space and measure how role confusion predicts attack success in both standard agent attacks and CoT Forgery
+- reproduce CoT Forgery and test evaluations in both chat and agent settings
+
+To quickly learn how to create role probes and measure role confusion, skip to the [Role Confusion Tutorial](#tutorial-role-confusion) section instead of cloning the full repo.
+
+To simply test CoT Forgery, simply run 
+
+
+## ⚡Tutorial: Role Confusion
+
+To understand how to train role probes and use them to understand attack success:
+- Download `demo/role-probe-demo.ipynb` and `demo/simple_test_helpers.py` (full repo not needed)
+- Run the notebook and make sure the helpers file is available in the same context
+
+## ⚡Tutorial: CoT Forgery
+
+To execute the reasoning spoofing, simply download and run `demo/cot-forgery-demo.ipynb`. This requires an Openrouter API key.
 
 ## ⚡ Quickstart
 
@@ -119,7 +137,7 @@ This section runs and evaluates the CoT Forgery prompts on a variety of local an
 Run notebooks to: (1) generate the actual CoT Forgery jailbreak prompts; (2) run the attacks on locally-loaded `gpt-oss-*` model; (3) run the attacks on closed-weight models; and (4) create visualizations of the results. 
 
 1. **Generate CoT Forgery jailbreak prompts**
-    - **🚀 Run**: `user-injections/01-generate-policies.ipynb`
+    - **🚀 Run**: `cot-forgery-chat-evals/01-generate-forgeries.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Calls an LLM via OpenRouter to generate the CoT forgery prompts (as well as comparison baseline prompts) for each harmful question in StrongREJECT. Does not yet run forward passes or generations.
@@ -128,36 +146,36 @@ Run notebooks to: (1) generate the actual CoT Forgery jailbreak prompts; (2) run
       </details>
 
 2. **Run CoT Forgery attacks on local models**
-    - **🚀 Run**: `user-injections/02-export-jailbreak-generations.ipynb`
+    - **🚀 Run**: `cot-forgery-chat-evals/02-export-jailbreak-generations.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Runs CoT forgery plus baseline prompts on local models. Uses `gpt-oss-20b` / `gpt-oss-120b` locally with the model loaded at recommended settings (FA3 + MXFP4 experts). After generation, calls an LLM classifier via OpenRouter to classify jailbreak success.
       
-      **📥 Requires**: `01-generate-policies.ipynb`
+      **📥 Requires**: `01-generate-forgeries.ipynb`
       
       **↗️ Output**: `base-harmful-responses-classified.csv` (generated text and attack success classifications)
       </details>
 
 3. **Run CoT Forgery attacks on closed models**
-    - **🚀 Run**: `user-injections/03-run-openrouter-generations.ipynb`
+    - **🚀 Run**: `cot-forgery-chat-evals/03-run-openrouter-generations.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Runs CoT forgery plus baseline prompts on non-local models via OpenRouter. After generation, calls an LLM classifier via OpenRouter to classify attack success.
       
-      **📥 Requires**: `01-generate-policies.ipynb`
+      **📥 Requires**: `01-generate-forgeries.ipynb`
       
       **↗️ Output**: `openrouter-generations/harmful-responses-classified.csv` (generated text and jailbreak success classifications)
       </details>
 
 4. **(Optional) Visualize results**
-    - **🚀 Run**: `user-injections/04-plot-jailbreak-stats.ipynb`
+    - **🚀 Run**: `cot-forgery-chat-evals/04-plot-jailbreak-stats.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Plots results.
       
       **📥 Requires**: `02-export-jailbreak-generations.ipynb`, `03-run-openrouter-generations.ipynb`
       
-      **↗️ Output**: `user-injections/plots/*` (visualizations)
+      **↗️ Output**: `cot-forgery-chat-evals/plots/*` (visualizations)
       </details>
 
 ### 4. CoT Forgery: Agents
@@ -168,7 +186,7 @@ The below notebooks run an agentic prompt injection jailbreak using an ReAct too
 Run the notebooks in this section to: (1) run CoT Forgery prompt injection on local models; (2) run CoT Forgery prompt injection on closed weight models; (3) visualize results.
 
 1. **Run CoT Forgery attacks on local agents**
-    - **🚀 Run**: `tool-injections/01-run-injections-gpt-oss.ipynb`
+    - **🚀 Run**: `cot-forgery-agent-evals/01-run-injections-gpt-oss.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Sets up and runs prompt injection exfiltration attacks with locally loaded `gpt-oss-*` models, then classifies whether the exfiltration worked successfully.
@@ -177,7 +195,7 @@ Run the notebooks in this section to: (1) run CoT Forgery prompt injection on lo
       </details>
 
 2. **Run CoT Forgery attacks on closed-weight agents**
-    - **🚀 Run**: `tool-injections/02-run-injections-openai.ipynb`
+    - **🚀 Run**: `cot-forgery-agent-evals/02-run-injections-openai.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Sets up and runs prompt injection exfiltration attacks with OpenAI-hosted models, then classifies whether the exfiltration worked successfully.
@@ -186,14 +204,14 @@ Run the notebooks in this section to: (1) run CoT Forgery prompt injection on lo
       </details>
 
 3. **(Optional) Visualize results**
-    - **🚀 Run**: `tool-injections/03-plot-agent-results.ipynb`
+    - **🚀 Run**: `cot-forgery-agent-evals/03-plot-agent-results.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Plots results.
       
       **📥 Requires**:  `01-run-injections-gpt-oss.ipynb`, `02-run-injections-openai.ipynb`.
       
-      **↗️ Output**: `tool-injections/plots/*` (visualizations)
+      **↗️ Output**: `cot-forgery-agent-evals/plots/*` (visualizations)
       </details>
 
 
@@ -205,51 +223,51 @@ This section notebooks perform the causal mechanistic analysis using the probes 
 Run notebooks to: (1-2) generate activations from the CoT Forgery prompts + generations in the previous section; (3) use the role probes; (4) visualize results.
 
 1. **Generate activations from user Cot Forgery attacks**
-    - **🚀 Run**: `role-injection-analysis/02-export-user-injection-activations.ipynb` 
+    - **🚀 Run**: `cot-forgery-role-confusion/02-export-user-injection-activations.ipynb` 
     - <details><summary>Description</summary>
       
       **📚 Description**: Takes the CoT Forgery results from the prior user-injection section and runs forward passes to export layer-by-layer activations for either of the `gpt-oss-*` models.
       
-      **📥 Requires**: `user-injections/02-export-jailbreak-generations.ipynb`
+      **📥 Requires**: `cot-forgery-chat-evals/02-export-jailbreak-generations.ipynb`
       
       **↗️ Output**: `activations-redteam/{model_name}` (activations and metadata)
       </details>
 
 2. **(Optional) Generate activations from agent Cot Forgery attacks**
-    - **🚀 Run**: `role-injection-analysis/03-export-agent-activations.ipynb`
+    - **🚀 Run**: `cot-forgery-role-confusion/03-export-agent-activations.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Takes the CoT Forgery results from the prior agent-injection section and runs forward passes to export layer-by-layer activations for either of the `gpt-oss-*` models. Skip this if you don't care about role space analysis of agent injections. 
       
-      **📥 Requires**: `tool-injections/01-run-injections-gpt-oss.ipynb`
+      **📥 Requires**: `cot-forgery-agent-evals/01-run-injections-gpt-oss.ipynb`
       
       **↗️ Output**:`activations-agent/{model_name}` (activations and metadata)
       </details>
 
 3. **Project CoT Forgery attacks into role space**
-    - **🚀 Run**: `role-injection-analysis/03-project-role-probes.ipynb`; skip the last section if you skipped #3 don't care about role analysis of agent injections
+    - **🚀 Run**: `cot-forgery-role-confusion/03-project-role-probes.ipynb`; skip the last section if you skipped #3 don't care about role analysis of agent injections
     - <details><summary>Description</summary>
       
       **📚 Description**: Uses the probes to conduct causal mech interp analysis on the CoT Forgery activations.
       
       **📥 Requires**: `role-analysis/02-train-role-probes.ipynb`, `01-export-user-injection-activations.ipynb`,  `02-export-agent-activations.ipynb` (for agent section)
       
-      **↗️ Output**: `role-injection-analysis/exports/*` (dumped results)
+      **↗️ Output**: `cot-forgery-role-confusion/exports/*` (dumped results)
       </details>
 
 4. **(Optional) Visualize results**
-    - **🚀 Run**: `role-injection-analysis/04-plot-injection-probe-results.ipynb`, `role-injection-analysis/05-plot-agent-probe-results.ipynb`
+    - **🚀 Run**: `cot-forgery-role-confusion/04-plot-injection-probe-results.ipynb`, `cot-forgery-role-confusion/05-plot-agent-probe-results.ipynb`
     - <details><summary>Description</summary>
       
       **📚 Description**: Plots results.
       
       **📥 Requires**: `02-project-role-probes.ipynb`
       
-      **↗️ Output**: `role-injection-analysis/plots/*` (visualizations)
+      **↗️ Output**: `cot-forgery-role-confusion/plots/*` (visualizations)
       </details>
 
-### 6. Role Analysis: General Prompt Injections
-This section notebooks perform the role analysis on the agent tool injections.
+### 6. Role Analysis: Standard Prompt Injections
+Role confusion analysis of **standard agent prompt injections** (instead of CoT Forgery) from Sec 5.2 of the paper.
 <p align="center">
   <img src="docs/userness-x-asr.png" width="60%">
 </p>
