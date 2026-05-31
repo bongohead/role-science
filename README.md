@@ -7,11 +7,6 @@
   <a href="https://github.com/role-confusion/prompt-injection-as-role-confusion"><img alt="Code" src="https://img.shields.io/badge/Code-24292f?style=flat-square"></a>
 </p>
 
-<p align="center">
-  Official code for <a href="https://arxiv.org/abs/2603.12277"><em>Prompt Injection as Role Confusion</em></a> (ICML 2026).<br>
-  Tools for measuring how LLMs internally perceive roles, and reproducing all experiments from the paper.
-</p>
-
 ## Overview
 
 LLMs see the world as a single stream of text, partitioned into *roles* like `<user>` or `<tool>`. We trace **prompt injection** to **role confusion**: models perceive the source of text from *how it sounds*, not its labeled role. A command hidden in a webpage hijacks an agent simply because it sounds like `<user>` text, despite its `<tool>` label.
@@ -25,20 +20,19 @@ This repo provides:
 
 The [quickstart demos](#quickstart) are the fastest way to get started; the [full reproduction notebooks](#full-reproduction) cover every experiment in the paper.
 
-## Quickstart
+## ⚡Quickstart
 
 We recommend starting here rather than cloning the full repo.
 
 **Role probes demo** - train probes and test role confusion on real examples:
-- Download `demo/role-probe-demo.ipynb` and `demo/simple_test_helpers.py` into the same directory
-- Run the notebook
+- Download and run `demo/role-probe-demo.ipynb` with `demo/simple_test_helpers.py` in the same directory
 
 **CoT Forgery demo** - run the attack on a few examples:
 - Download and run `demo/cot-forgery-demo.ipynb`
 
-Everything else below is only needed for full experiment-by-experiment replication of the paper.
+All below instructions are only needed for full experiment-by-experiment replication of the paper.
 
-## Requirements
+## 🔨Requirements
 
 ### Hardware
 
@@ -69,7 +63,7 @@ HF_TOKEN=...
 
 API-based experiments can incur provider costs.
 
-## Full Reproduction
+## 🔁Full Reproduction
 
 The notebooks below are organized by experiment family. Within each family, run
 the notebooks in order unless the step is marked optional.
